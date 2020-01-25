@@ -2967,14 +2967,21 @@ then
   # Force building of shared hwloc library in embedded mode.
   # See https://github.com/UIUC-PPL/charm/issues/2599 and 
   # https://github.com/open-mpi/hwloc/issues/371 for more details.
-  export LDFLAGS="-Wl,-rpath $CHARMLIBSO"
+  enable_shared='yes'
+  export am_libhwloc_embedded_la_rpath="-rpath $CHARMLIBSO"
+else
+  enable_shared='no'
+  export am_libhwloc_embedded_la_rpath=''
 fi
+AC_SUBST(am_libhwloc_embedded_la_rpath)
 enable_pci='no'
 enable_libudev='no'
 enable_libxml2='no'
 enable_visibility='no'
 enable_nvml='no'
 enable_opencl='no'
+enable_gl='no'
+enable_cairo='no'
 . hwloc/VERSION
 export libhwloc_so_version
 AC_SUBST(libhwloc_so_version)
