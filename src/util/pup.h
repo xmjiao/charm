@@ -206,6 +206,7 @@ class er {
   enum {IS_SIZING   =0x0100,
   	IS_PACKING  =0x0200,
         IS_UNPACKING=0x0400,
+        IS_EXTRACTING=0x0800,
         TYPE_MASK   =0xFF00
   };
   unsigned int PUP_er_state;
@@ -218,6 +219,9 @@ class er {
   bool isSizing(void) const {return (PUP_er_state&IS_SIZING)!=0?true:false;}
   bool isPacking(void) const {return (PUP_er_state&IS_PACKING)!=0?true:false;}
   bool isUnpacking(void) const {return (PUP_er_state&IS_UNPACKING)!=0?true:false;}
+  bool isExtracting(void) const {return (PUP_er_state&IS_EXTRACTING)!=0?true:false;}
+  void setExtracting(void) {PUP_er_state = IS_EXTRACTING;}
+  void setUnpacking(void) {PUP_er_state = IS_UNPACKING;}
   const char *  typeString() const;
   unsigned int getStateFlags(void) const {return PUP_er_state;}
 
@@ -447,6 +451,8 @@ inline void toMemBuf(T &t,void *buf, size_t len) {
 
 //For unpacking from a memory buffer
 class fromMem : public mem {
+ private:
+   bool noMemcpy;
  protected:
   //Generic bottleneck: unpack n items of size itemSize from p.
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t);
@@ -457,8 +463,9 @@ class fromMem : public mem {
   void pup_buffer_generic(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, bool isMalloc);
 
  public:
+  void setNoMemcpy(bool val) { noMemcpy = val;}
   //Read data from the given buffer
-  fromMem(const void *Nbuf):mem(IS_UNPACKING,(myByte *)Nbuf) {}
+  fromMem(const void *Nbuf):mem(IS_UNPACKING,(myByte *)Nbuf) { noMemcpy = false; }
 };
 template <class T>
 inline void fromMemBuf(T &t,void *buf,size_t len) {

@@ -14,7 +14,8 @@ class main : public CBase_main {
 
       mainProxy = thisProxy;
 
-      totalElems = 10 * CkNumPes();
+      //totalElems = 10 * CkNumPes();
+      totalElems = CkNumPes();
       arrProxy = CProxy_arr::ckNew(totalElems);
       arrProxy.run();
     }
@@ -31,7 +32,7 @@ class arr : public CBase_arr {
   int *buffer;
   CkCallback cb;
   int iteration;
-  int counts[4];
+  int counts[5];
 
   public:
     arr() {
@@ -47,7 +48,7 @@ class arr : public CBase_arr {
 
       numNonAtSync = TOTAL_ITER - numAtSync;
 
-      for(int i=0; i < 4; i++)
+      for(int i=0; i < 5; i++)
         counts[i] = 0;
 
       for(int i=0; i < SIZE; i++)
@@ -75,12 +76,14 @@ class arr : public CBase_arr {
       p|numAtSync;
       p|numNonAtSync;
 
+      PUParray(p, counts, 5);
       if(iteration % 2 == 0) // Test pup_buffer custom
         p.pup_buffer(buffer, SIZE, buff_allocate, buff_deallocate);
       else // Test pup_buffer default
         p.pup_buffer(buffer, SIZE);
 
-      PUParray(p, counts, 4);
+      if(p.isUnpacking())
+        verify(4); // local, just after migration
     }
 
     void verify(int mode) {
@@ -96,19 +99,22 @@ class arr : public CBase_arr {
     }
 
     void testCompletion() {
-      bool res1, res2, res3, res4;
+      bool res1, res2, res3, res4, res5;
       res1 = (counts[0] == numNonAtSync);
       res2 = (counts[2] == numAtSync);
       res3 = (counts[3] == numAtSync);
 
       res4  = (counts[1] == 0); // Default, if CMK_LBDB_ON is 0 or CkNumPes() == 1
+      res5  = (counts[4] == 0);
+
 #if CMK_LBDB_ON
       if(CkNumPes() > 1) {
         res4 = (counts[1] == numAtSync);
+        res5 = (counts[4] == numAtSync);
       }
 #endif
 
-      if(res1 && res2 && res3 && res4) {
+      if(res1 && res2 && res3 && res4 && res5) {
         free(buffer);
         contribute(cb);
       }
@@ -134,10 +140,12 @@ class arr : public CBase_arr {
     }
 
     void ckJustMigrated() { // Test data when ckJustMigrated is called by RTS
+      CmiPrintf("[%d][%d][%d] ckJustMigrated $$$$$$$ called \n", CmiMyPe(), CmiMyNode(), CmiMyRank());
       verify(1); // local, just after migration
     }
 
     void ResumeFromSync() { // Test data when ResumeFromSync is called by RTS
+      CmiPrintf("[%d][%d][%d] ResumeFromSync $$$$$$$ called \n", CmiMyPe(), CmiMyNode(), CmiMyRank());
       verify(2); // local, from resumeFromSync
       run();
     }

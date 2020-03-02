@@ -1258,6 +1258,8 @@ void CentralLB::ResumeClients(int balancing)
 #if CMK_LBDB_ON
   DEBUGF(("[%d] Resuming clients. balancing:%d.\n",CkMyPe(),balancing));
 
+  CmiPrintf("[%d][%d][%d] *********** CentralLB::ResumeClients\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+
   theLbdb->ResumeClients();
   if (balancing)  {
 

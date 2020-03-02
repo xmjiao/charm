@@ -72,6 +72,8 @@ class main : public CBase_main {
   int test_repeat;      // boolean: keep running tests
   char **tests_to_skip; // argv
   int num_tests_to_skip; // argc
+  //char **test_only;
+  //char **test_repeat;
   int megatest_skip(const char *);
   
   void megatest_next(void);
@@ -95,7 +97,8 @@ int main::megatest_skip(const char *test)
   int num_skip = num_tests_to_skip;
   char **skip;
   skip = tests_to_skip;
-  for (i=0; i<num_skip; i++) {
+  for (i=1; i<num_skip; i++) {
+    //CmiPrintf("test_skip and first char is %d and comparison is %d and test negate skip is %d\n", skip[1][0], strcmp(skip[i]+1, test), test_negate_skip);
     if ((skip[i][0]=='-')&&(strcmp(skip[i]+1, test)==0))
       return 1 - test_negate_skip;
   }
@@ -202,6 +205,8 @@ main::main(CkArgMsg *msg)
   }
   num_tests_to_skip = argc;
   tests_to_skip = argv;
+
+  CmiPrintf("[%d][%d][%d] megatest::main num_tests_to_ski[ = %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), argc);
   CProxy_main(thishandle).start();
 }
 
