@@ -8,6 +8,7 @@ mainmodule jacobi2d {
   readonly int num_chare_x;
   readonly int num_chare_y;
   readonly int maxiterations;
+  readonly CProxy_ArrayMeshStreamer<double, CkArrayIndex2D, Jacobi, SimpleMeshRouter> tram_proxy;
 
   mainchare Main {
     entry Main(CkArgMsg *m);
@@ -22,16 +23,17 @@ mainmodule jacobi2d {
   array [2D] Jacobi {
     entry Jacobi(void);
     entry void debug(void);
-    entry void begin_iteration(void);
     entry void receiveGhosts(int iter, int dir, int size, double ghosts[size]);
 #if !defined PERF
     entry [reductiontarget] void recvConvergeResult(bool result);
 #endif // PERF
 
+    entry void send();
+
     entry void run() {
       while (!converged && iterations < maxiterations) {
         serial "begin_iteration" {
-          begin_iteration();
+          send();
         }
         for(imsg = 0; imsg < neighbors; imsg++) {
           // "iterations" keeps track of messages across steps
@@ -69,4 +71,8 @@ mainmodule jacobi2d {
   group SetThreads {
     entry SetThreads(int numThreads, int spread);
   };
+
+  message MeshStreamerMessage<ArrayDataItem<double, CkArrayIndex2D>>;
+  group MeshStreamer<ArrayDataItem<double, CkArrayIndex2D>, SimpleMeshRouter>;
+  group ArrayMeshStreamer<double, CkArrayIndex2D, Jacobi, SimpleMeshRouter>;
 };

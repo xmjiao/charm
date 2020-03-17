@@ -5,6 +5,7 @@
  *
  */
 
+#include "NDMeshStreamer.h"
 #include "jacobi2d.decl.h"
 
 #if defined OMP
@@ -29,6 +30,7 @@
 /*readonly*/ int num_chare_y;
 
 /*readonly*/ int maxiterations;
+/*readonly*/ CProxy_ArrayMeshStreamer<double, CkArrayIndex2D, Jacobi, SimpleMeshRouter> tram_proxy;
 
 static unsigned long next = 1;
 
@@ -109,14 +111,18 @@ public:
 
     array = CProxy_Jacobi::ckNew(num_chare_x, num_chare_y);
 
+    // TRAM
+    int tram_dims[1] = {CkNumPes()};
+    tram_proxy = CProxy_ArrayMeshStreamer<double, CkArrayIndex2D, Jacobi, SimpleMeshRouter>
+      ::ckNew(1024, 1, tram_dims, array);
+    CkCallback start_cb(CkIndex_Jacobi::send(), array);
+    tram_proxy.init(start_cb, -1);
+
 #if defined AFFINITY
     CProxy_SetThreads::ckNew(numthreads, spread);
 #else // AFFINITY
     // start measuring execution time
     startTime = CkWallTimer();
-
-    // start computation
-    array.run();
 #endif // AFFINITY
   }
 
@@ -259,7 +265,7 @@ public:
     }
 
     // Send ghost faces to the six neighbors
-    void begin_iteration(void) {
+    void send(void) {
 #if defined BIGSIM
       startTraceBigSim();
 #endif // defined BIGSIM
@@ -267,6 +273,8 @@ public:
       if (thisIndex.x + thisIndex.y == 0) CkPrintf("Iteration %d\n", iterations);
 #endif // defined ITERATION
       iterations++;
+
+      ArrayMeshStreamer<double, CkArrayIndex2D, Jacobi, SimpleMeshRouter>* local_tram_proxy = tram_proxy.ckLocalBranch();
 
       if(!leftBound)
       {
@@ -348,7 +356,7 @@ public:
 
       max_error = 0.;
       // When all neighbor values have been received, we update our values and proceed
-      #pragma omp parallel for private(temperatureIth, difference) collapse(2) schedule(static)
+      #pragma omp parallel for private(temperatureIth, difference) schedule(static)
       for(int i=istart; i<ifinish; ++i) {
         for(int j=jstart; j<jfinish; ++j) {
           temperatureIth=(temperature[i][j] 
