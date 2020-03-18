@@ -423,6 +423,7 @@ struct zcPupPendingRgetsMsg {
   CmiUInt8 id;
   int numops;
   CkGroupID locMgrId;
+  void *arrayMigrateMsg;
 #if CMK_SMP
   int pe;
 #endif
@@ -434,7 +435,7 @@ void zcPupGetCompleted(NcpyOperationInfo *ncpyOpInfo);
 void _zcpyPupCompleteHandler(zcPupPendingRgetsMsg *msg);
 
 class CkLocMgr;
-void zcPupIssueRgets(CmiUInt8 id, CkLocMgr *locMgr);
+void zcPupIssueRgets(CmiUInt8 id, CkLocMgr *locMgr, void *msg);
 
 void CkRdmaZCPupCustomHandler(void *ack);
 

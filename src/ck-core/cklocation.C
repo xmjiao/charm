@@ -1493,6 +1493,7 @@ CkMigratable::CkMigratable(CkMigrateMessage *m): Chare(m) {
 int CkMigratable::ckGetChareType(void) const {return thisChareType;}
 
 void CkMigratable::pup(PUP::er &p) {
+  CmiPrintf("[%d][%d][%d] *********** CkMigratable::pup isPacking:%d, isUnpacking:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), p.isPacking(), p.isUnpacking());
 	DEBM((AA "In CkMigratable::pup %s\n" AB,idx2str(thisIndexMax)));
 	Chare::pup(p);
 	p|thisIndexMax;
@@ -1512,7 +1513,10 @@ void CkMigratable::pup(PUP::er &p) {
 	if(p.isUnpacking()){myRec->AsyncEvacuate(asyncEvacuate);}
 #endif
 	
-	ckFinishConstruction();
+//	if(!p.isUnpacking())
+	if(!p.isExtracting()) {
+		ckFinishConstruction();
+  }
 }
 
 void CkMigratable::ckDestroy(void) {}
@@ -1646,10 +1650,13 @@ void CkMigratable::metaLBCallLB() {
 
 void CkMigratable::ckFinishConstruction(void)
 {
+
 //	if ((!usesAtSync) || barrierRegistered) return;
 	myRec->setMeasure(usesAutoMeasure);
 	if (barrierRegistered) return;
 	DEBL((AA "Registering barrier client for %s\n" AB,idx2str(thisIndexMax)));
+
+  CmiPrintf("[%d][%d][%d] *********** ckFinishConstruction adding staticResumeFromSync barrier and usesAtSync is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), usesAtSync);
         if (usesAtSync)
 	  ldBarrierHandle = myRec->getLBDB()->AddLocalBarrierClient(
 		(LDBarrierFn)staticResumeFromSync,(void*)(this));
@@ -1752,6 +1759,7 @@ void CkMigratable::staticResumeFromSync(void* data)
   	el->clearMetaLBData();
 	}
 
+  CmiPrintf("[%d][%d][%d] *********** CkMigratable staticResumeFromSync\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
   CkLocMgr *localLocMgr = el->myRec->getLocMgr();
   auto iter = localLocMgr->bufferedActiveRgetMsgs.find(el->ckGetID());
   if(iter != localLocMgr->bufferedActiveRgetMsgs.end()) {
@@ -2255,7 +2263,22 @@ CkLocRec *CkLocMgr::createLocal(const CkArrayIndex &idx,
 }
 
 // Used to handle messages that were buffered because of active rgets in progress
-void CkLocMgr::processAfterActiveRgetsCompleted(CmiUInt8 id) {
+void CkLocMgr::processAfterActiveRgetsCompleted(CmiUInt8 id, void *msg) {
+
+    CmiPrintf("[%d][%d][%d] *********** rgets are complete\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+    CkArrayElementMigrateMessage *arrayMigrateMsg = (CkArrayElementMigrateMessage *)msg;
+    PUP::fromMem p(arrayMigrateMsg->packData);
+
+    const CkArrayIndex &idx= arrayMigrateMsg->idx;
+    CkLocRec *rec = elementRec(idx);
+
+    p.reset();
+    p.setExtracting();
+    pupElementsForBegin(p,rec,CkElementCreation_migrate);
+
+    p.setUnpacking();
+    p.setNoMemcpy(false);
+    pupElementsForData(p,rec,CkElementCreation_migrate);
 
     // Call ckJustMigrated
     CkLocRec *myLocRec = elementNrec(id);
@@ -2839,8 +2862,48 @@ void CkLocMgr::iterate(CkLocIterator &dest) {
   }
 }
 
+void CkLocMgr::pupElementsForBegin(PUP::er &p,CkLocRec *rec, CkElementCreation_t type)
+{
+  for (auto itr = managers.begin(); itr != managers.end(); ++itr) {
+    int elCType;
+    CkArray *arr = itr->second;
+    if (!p.isUnpacking() && !p.isExtracting())
+    { //Need to find the element's existing type
+      CkMigratable *elt = arr->getEltFromArrMgr(rec->getID());
+      if (elt) elCType=elt->ckGetChareType();
+      else elCType=-1; //Element hasn't been created
+    }
+    p(elCType);
+    if (p.isUnpacking() && elCType!=-1) {
+      //Create the element
+      CkMigratable *elt = arr->allocateMigrated(elCType, type);
+      int migCtorIdx=_chareTable[elCType]->getMigCtor();
+      //Insert into our tables and call migration constructor
+      if (!addElementToRec(rec,arr,elt,migCtorIdx,NULL)) return;
+      if (type==CkElementCreation_resume)
+      { // HACK: Re-stamp elements on checkpoint resume--
+        //  this restores, e.g., reduction manager's gcount
+        arr->stampListenerData(elt);
+      }
+    }
+  }
+}
 
+void CkLocMgr::pupElementsForData(PUP::er &p,CkLocRec *rec, CkElementCreation_t type)
 
+{
+  //Next pup the element data
+  for (auto itr = managers.begin(); itr != managers.end(); ++itr) {
+    CkMigratable *elt = itr->second->getEltFromArrMgr(rec->getID());
+    if (elt!=NULL) {
+      elt->virtual_pup(p);
+#if CMK_ERROR_CHECKING
+      if (p.isUnpacking())
+        elt->sanitycheck();
+#endif
+    }
+  }
+}
 
 /************************** LocMgr: MIGRATION *************************/
 void CkLocMgr::pupElementsFor(PUP::er &p,CkLocRec *rec,
@@ -2848,42 +2911,9 @@ void CkLocMgr::pupElementsFor(PUP::er &p,CkLocRec *rec,
 {
 	p.comment("-------- Array Location --------");
 
-	//First pup the element types
-	// (A separate loop so ckLocal works even in element pup routines)
-    for (auto itr = managers.begin(); itr != managers.end(); ++itr) {
-		int elCType;
-                CkArray *arr = itr->second;
-		if (!p.isUnpacking())
-		{ //Need to find the element's existing type
-			CkMigratable *elt = arr->getEltFromArrMgr(rec->getID());
-			if (elt) elCType=elt->ckGetChareType();
-			else elCType=-1; //Element hasn't been created
-		}
-		p(elCType);
-		if (p.isUnpacking() && elCType!=-1) {
-			//Create the element
-			CkMigratable *elt = arr->allocateMigrated(elCType, type);
-			int migCtorIdx=_chareTable[elCType]->getMigCtor();
-			//Insert into our tables and call migration constructor
-			if (!addElementToRec(rec,arr,elt,migCtorIdx,NULL)) return;
-                        if (type==CkElementCreation_resume)
-                        { // HACK: Re-stamp elements on checkpoint resume--
-                          //  this restores, e.g., reduction manager's gcount
-                          arr->stampListenerData(elt);
-                        }
-		}
-	}
-	//Next pup the element data
-    for (auto itr = managers.begin(); itr != managers.end(); ++itr) {
-		CkMigratable *elt = itr->second->getEltFromArrMgr(rec->getID());
-		if (elt!=NULL)
-                {
-                        elt->virtual_pup(p);
-#if CMK_ERROR_CHECKING
-                        if (p.isUnpacking()) elt->sanitycheck();
-#endif
-                }
-	}
+	pupElementsForBegin(p, rec, type);
+	pupElementsForData(p, rec, type);
+
 #if CMK_MEM_CHECKPOINT
 	if(rebuild){
 	  ArrayElement *elt;
@@ -3040,6 +3070,7 @@ void CkLocMgr::metaLBCallLB(CkLocRec *rec) {
 */
 void CkLocMgr::immigrate(CkArrayElementMigrateMessage *msg)
 {
+  CmiPrintf("[%d][%d][%d] *********** CkLocMgr::immigrate\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
 	const CkArrayIndex &idx=msg->idx;
 		
 	PUP::fromMem p(msg->packData); 
@@ -3060,14 +3091,28 @@ void CkLocMgr::immigrate(CkArrayElementMigrateMessage *msg)
 	
 	envelope *env = UsrToEnv(msg);
 	CmiAssert(CpvAccess(newZCPupGets).empty()); // Ensure that vector is empty
-	//Create the new elements as we unpack the message
-	pupElementsFor(p,rec,CkElementCreation_migrate);
+	pupElementsForBegin(p,rec,CkElementCreation_migrate);
+
+	p.setExtracting();
+	pupElementsForData(p,rec,CkElementCreation_migrate);
+
+//	bool zcRgetsActive = false;
 	bool zcRgetsActive = !CpvAccess(newZCPupGets).empty();
 	if(zcRgetsActive) {
+    CmiPrintf("[%d][%d][%d] *********** calling rgets\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+    //CmiPrintf("[%d][%d][%d] $$$$$$$ Issuing Rgets\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
 		// newZCPupGets is not empty, rgets need to be launched
 		// newZCPupGets is populated with NcpyOperationInfo during pupElementsFor by pup_buffer calls that require Rgets
 		// Issue Rgets using the populated newZCPupGets vector
-		zcPupIssueRgets(msg->id, this);
+		zcPupIssueRgets(msg->id, this, (void *)msg);
+	} else {
+    //CmiPrintf("[%d][%d][%d] $$$$$$$ NOT Issuing Rgets\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+		p.reset();
+		pupElementsForBegin(p,rec,CkElementCreation_migrate);
+		p.setUnpacking();
+		p.setNoMemcpy(true);
+		//Create the new elements as we unpack the message
+		pupElementsForData(p,rec,CkElementCreation_migrate);
 	}
 	CpvAccess(newZCPupGets).clear(); // Clear this to reuse the vector
 	if (p.size()!=msg->length) {
@@ -3114,8 +3159,9 @@ void CkLocMgr::immigrate(CkArrayElementMigrateMessage *msg)
 		emigrate(rec,targetPE);
 	}
 #endif
-
-	delete msg;
+	if(!zcRgetsActive) {
+		delete msg;
+	}
 }
 
 void CkLocMgr::restore(const CkArrayIndex &idx, CmiUInt8 id, PUP::er &p)

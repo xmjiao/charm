@@ -2039,7 +2039,7 @@ inline void _ncpyAckHandler(ncpyHandlerMsg *msg) {
 #if CMK_SMP
 // Executed on the worker thread to enqueue all buffered messages after Rgets complete
 void _zcpyPupCompleteHandler(zcPupPendingRgetsMsg *msg) {
-  CProxy_CkLocMgr(msg->locMgrId).ckLocalBranch()->processAfterActiveRgetsCompleted(msg->id);
+  CProxy_CkLocMgr(msg->locMgrId).ckLocalBranch()->processAfterActiveRgetsCompleted(msg->id, msg->arrayMigrateMsg);
   CmiFree(msg);
 }
 #endif
@@ -2071,7 +2071,7 @@ void zcPupGetCompleted(NcpyOperationInfo *info) {
                     (char *)ref);
 #else
         // On worker thread, handle all buffered messages
-        CProxy_CkLocMgr(ref->locMgrId).ckLocalBranch()->processAfterActiveRgetsCompleted(ref->id);
+        CProxy_CkLocMgr(ref->locMgrId).ckLocalBranch()->processAfterActiveRgetsCompleted(ref->id, ref->arrayMigrateMsg);
 #endif
         CmiFree(ref);
       }
@@ -2094,13 +2094,14 @@ void zcPupGetCompleted(NcpyOperationInfo *info) {
 }
 
 // Issue Rgets for ZC Pup using NcpyOperationInfo stored in newZCPupGets
-void zcPupIssueRgets(CmiUInt8 id, CkLocMgr *locMgr) {
+void zcPupIssueRgets(CmiUInt8 id, CkLocMgr *locMgr, void *msg) {
 
   // Allocate a zcPupPendingRgetsMsg that is used for ack handling
   zcPupPendingRgetsMsg *ref = (zcPupPendingRgetsMsg *)CmiAlloc(sizeof(zcPupPendingRgetsMsg));
   ref->id = id;
   ref->numops = CpvAccess(newZCPupGets).size();
   ref->locMgrId = locMgr->getGroupID();
+  ref->arrayMigrateMsg = msg;
 #if CMK_SMP
   ref->pe = CmiMyPe();
 #endif

@@ -473,6 +473,9 @@ private:
 	void pupElementsFor(PUP::er &p,CkLocRec *rec,
 		CkElementCreation_t type,bool rebuild = false);
 
+	void pupElementsForBegin(PUP::er &p, CkLocRec *rec, CkElementCreation_t type);
+	void pupElementsForData(PUP::er &p, CkLocRec *rec, CkElementCreation_t type);
+
 	/// Call this member function on each element of this location:
 	typedef void (CkMigratable::* CkMigratable_voidfn_t)(void);
 
@@ -499,7 +502,7 @@ public:
 	// Take all those actions that were waiting for the rgets launched from pup_buffer to complete
 	// These actions include: calling ckJustMigrated, calling ResumeFromSync and delivering any buffered messages
 	// that were sent for the element (which was still carrying out rgets)
-	void processAfterActiveRgetsCompleted(CmiUInt8 id);
+	void processAfterActiveRgetsCompleted(CmiUInt8 id, void *arrayMigrateMsg);
 
 //Data Members:
     //Map array ID to manager and elements

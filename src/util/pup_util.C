@@ -162,8 +162,9 @@ void PUP::fromMem::bytes(void *p,size_t n,size_t itemSize,dataType t)
 	((pupCheckRec *)buf)->check(t,n);
 	buf+=sizeof(pupCheckRec);
 #endif
-	n*=itemSize; 
-	memcpy(p,(const void *)buf,n); 
+	n*=itemSize;
+	if(!noMemcpy)
+		memcpy(p,(const void *)buf,n);
 	buf+=n;
 }
 
@@ -187,15 +188,15 @@ void PUP::fromMem::pup_buffer_generic(void *&p,size_t n, size_t itemSize, dataTy
 	((pupCheckRec *)buf)->check(t,n);
 	buf+=sizeof(pupCheckRec);
 #endif
-	// Unpup a CmiNcpyBuffer object with the callback
-	CmiNcpyBuffer src;
+	if(isExtracting()) {
+		// Unpup a CmiNcpyBuffer object with the callback
+		CmiNcpyBuffer src;
 
-	PUP::fromMem fMem(buf);
-	fMem|src;
-	CmiAssert(sizeof(src) == sizeof(CmiNcpyBuffer));
+		PUP::fromMem fMem(buf);
+		fMem|src;
+		CmiAssert(sizeof(src) == sizeof(CmiNcpyBuffer));
 
-	// Allocate only if inter-process
-	if(isUnpacking()) {
+		// Allocate only if inter-process
 		if(CmiNodeOf(src.pe)!=CmiMyNode()) {
 			if(isMalloc)
 				p = malloc(n * itemSize);
@@ -210,7 +211,7 @@ void PUP::fromMem::pup_buffer_generic(void *&p,size_t n, size_t itemSize, dataTy
 			delete srcInfo;
 		}
 	}
-	buf+=sizeof(src);
+	buf+=sizeof(CmiNcpyBuffer);
 }
 
 void PUP::fromMem::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {

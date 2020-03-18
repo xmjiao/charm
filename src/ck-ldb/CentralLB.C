@@ -1230,6 +1230,7 @@ void CentralLB::MigrationDoneImpl (int balancing)
   LoadbalanceDone(balancing);        // callback
   // if sync resume invoke a barrier
   if (balancing && _lb_args.syncResume()) {
+    CmiPrintf("[%d][%d][%d] *********** CentralLB::ResumeClients through contribute\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
     contribute(CkCallback(CkReductionTarget(CentralLB, ResumeClients),
                 thisProxy));
   }
@@ -1238,6 +1239,7 @@ void CentralLB::MigrationDoneImpl (int balancing)
     if(CmiNodeAlive(CkMyPe()))
 #endif
     {
+    CmiPrintf("[%d][%d][%d] *********** CentralLB::ResumeClients through entry method\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
 	thisProxy [CkMyPe()].ResumeClients(balancing);
     }	
   }	
@@ -1257,6 +1259,8 @@ void CentralLB::ResumeClients(int balancing)
 {
 #if CMK_LBDB_ON
   DEBUGF(("[%d] Resuming clients. balancing:%d.\n",CkMyPe(),balancing));
+
+  CmiPrintf("[%d][%d][%d] *********** CentralLB::ResumeClients\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
 
   theLbdb->ResumeClients();
   if (balancing)  {
