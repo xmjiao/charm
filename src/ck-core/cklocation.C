@@ -1894,6 +1894,12 @@ void CkLocRec::migrateMe(int toPe) //Leaving this processor
 	myLocMgr->emigrate(this,toPe);
 }
 
+void CkLocRec::notifyLBDB() {
+#if CMK_LBDB_ON
+  myLocMgr->getLBDB()->Migrated(ldHandle, true);
+#endif
+}
+
 #if CMK_LBDB_ON
 void CkLocRec::startTiming(int ignore_running) {
   	if (!ignore_running) running=true;
@@ -2283,6 +2289,10 @@ void CkLocMgr::processAfterActiveRgetsCompleted(CmiUInt8 id, void *msg) {
     // Call ckJustMigrated
     CkLocRec *myLocRec = elementNrec(id);
     callMethod(myLocRec, &CkMigratable::ckJustMigrated);
+
+    // notify lbdb that rgets are complete
+    if(!arrayMigrateMsg->ignoreArrival)
+      rec->notifyLBDB();
 
     // Call ResumeFromSync on elements that were waiting for rgets
     auto iter2 = toBeResumeFromSynced.find(id);
@@ -3087,7 +3097,8 @@ void CkLocMgr::immigrate(CkArrayElementMigrateMessage *msg)
 	insertID(idx,msg->id);
 
 	//Create a record for this element
-	CkLocRec *rec=createLocal(idx,true,msg->ignoreArrival,false /* home told on departure */ );
+	//CkLocRec *rec=createLocal(idx,true,msg->ignoreArrival,false /* home told on departure */ );
+	CkLocRec *rec=createLocal(idx,true,true,false /* home told on departure */ );
 	
 	envelope *env = UsrToEnv(msg);
 	CmiAssert(CpvAccess(newZCPupGets).empty()); // Ensure that vector is empty
@@ -3106,6 +3117,9 @@ void CkLocMgr::immigrate(CkArrayElementMigrateMessage *msg)
 		// Issue Rgets using the populated newZCPupGets vector
 		zcPupIssueRgets(msg->id, this, (void *)msg);
 	} else {
+
+    if(!msg->ignoreArrival)
+      rec->notifyLBDB();
     //CmiPrintf("[%d][%d][%d] $$$$$$$ NOT Issuing Rgets\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
 		p.reset();
 		pupElementsForBegin(p,rec,CkElementCreation_migrate);
