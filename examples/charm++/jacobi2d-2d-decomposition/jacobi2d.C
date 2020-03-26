@@ -289,6 +289,7 @@ public:
       if(!topBound)
       {
         HaloMsg top_msg;
+        top_msg.init(BOTTOM, blockDimX);
         for(int i=0; i<blockDimX; ++i) 
           top_msg.data[i] = temperature[i+1][1];
         thisProxy(thisIndex.x, thisIndex.y-1).insertData(top_msg);
@@ -296,6 +297,7 @@ public:
       if(!bottomBound)
       {
         HaloMsg bottom_msg;
+        bottom_msg.init(TOP, blockDimX);
         for(int i=0; i<blockDimX; ++i) 
           bottom_msg.data[i] = temperature[i+1][blockDimY];
         thisProxy(thisIndex.x, thisIndex.y+1).insertData(bottom_msg);

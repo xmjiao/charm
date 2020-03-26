@@ -23,8 +23,8 @@ struct HaloMsg {
     p|size;
     if (p.isUnpacking()) {
       data = new double[size];
-      PUParray(p, data, size);
     }
+    PUParray(p, data, size);
   }
 };
 
