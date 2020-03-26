@@ -7,6 +7,7 @@
 
 #include "NDMeshStreamer.h"
 #include "jacobi2d.decl.h"
+#include "halomsg.h"
 
 #if defined OMP
 #include <omp.h>
@@ -30,7 +31,6 @@
 /*readonly*/ int num_chare_y;
 
 /*readonly*/ int maxiterations;
-/*readonly*/ CProxy_ArrayMeshStreamer<double, CkArrayIndex2D, Jacobi, SimpleMeshRouter> tram_proxy;
 
 static unsigned long next = 1;
 
@@ -111,18 +111,14 @@ public:
 
     array = CProxy_Jacobi::ckNew(num_chare_x, num_chare_y);
 
-    // TRAM
-    int tram_dims[1] = {CkNumPes()};
-    tram_proxy = CProxy_ArrayMeshStreamer<double, CkArrayIndex2D, Jacobi, SimpleMeshRouter>
-      ::ckNew(1024, 1, tram_dims, array);
-    CkCallback start_cb(CkIndex_Jacobi::send(), array);
-    tram_proxy.init(start_cb, -1);
-
 #if defined AFFINITY
     CProxy_SetThreads::ckNew(numthreads, spread);
 #else // AFFINITY
     // start measuring execution time
     startTime = CkWallTimer();
+
+    // start computation
+    array.run();
 #endif // AFFINITY
   }
 
@@ -265,7 +261,7 @@ public:
     }
 
     // Send ghost faces to the six neighbors
-    void send(void) {
+    void sendGhosts(void) {
 #if defined BIGSIM
       startTraceBigSim();
 #endif // defined BIGSIM
@@ -274,39 +270,35 @@ public:
 #endif // defined ITERATION
       iterations++;
 
-      ArrayMeshStreamer<double, CkArrayIndex2D, Jacobi, SimpleMeshRouter>* local_tram_proxy = tram_proxy.ckLocalBranch();
-
       if(!leftBound)
       {
-        double *leftGhost =  new double[blockDimY];
-        for(int j=0; j<blockDimY; ++j) 
-          leftGhost[j] = temperature[1][j+1];
-        thisProxy(thisIndex.x-1, thisIndex.y).receiveGhosts(iterations, RIGHT, blockDimY, leftGhost);
-        delete [] leftGhost;
+        HaloMsg left_msg;
+        left_msg.init(RIGHT, blockDimY);
+        for(int j=0; j<blockDimY; ++j)
+          left_msg.data[j] = temperature[1][j+1];
+        thisProxy(thisIndex.x-1, thisIndex.y).insertData(left_msg);
       }
       if(!rightBound)
       {
-        double *rightGhost =  new double[blockDimY];
+        HaloMsg right_msg;
+        right_msg.init(LEFT, blockDimY);
         for(int j=0; j<blockDimY; ++j) 
-          rightGhost[j] = temperature[blockDimX][j+1];
-        thisProxy(thisIndex.x+1, thisIndex.y).receiveGhosts(iterations, LEFT, blockDimY, rightGhost);
-        delete [] rightGhost;
+          right_msg.data[j] = temperature[blockDimX][j+1];
+        thisProxy(thisIndex.x+1, thisIndex.y).insertData(right_msg);
       }
       if(!topBound)
       {
-        double *topGhost =  new double[blockDimX];
+        HaloMsg top_msg;
         for(int i=0; i<blockDimX; ++i) 
-          topGhost[i] = temperature[i+1][1];
-        thisProxy(thisIndex.x, thisIndex.y-1).receiveGhosts(iterations, BOTTOM, blockDimX, topGhost);
-        delete [] topGhost;
+          top_msg.data[i] = temperature[i+1][1];
+        thisProxy(thisIndex.x, thisIndex.y-1).insertData(top_msg);
       }
       if(!bottomBound)
       {
-        double *bottomGhost =  new double[blockDimX];
+        HaloMsg bottom_msg;
         for(int i=0; i<blockDimX; ++i) 
-          bottomGhost[i] = temperature[i+1][blockDimY];
-        thisProxy(thisIndex.x, thisIndex.y+1).receiveGhosts(iterations, TOP, blockDimX, bottomGhost);
-        delete [] bottomGhost;
+          bottom_msg.data[i] = temperature[i+1][blockDimY];
+        thisProxy(thisIndex.x, thisIndex.y+1).insertData(bottom_msg);
       }
 #if defined BIGSIM
       endTraceBigSim("begin_iteration", iterations, 0.);
