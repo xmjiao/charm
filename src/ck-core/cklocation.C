@@ -206,24 +206,22 @@ for (index[0] = start_data[0]; index[0] < end_data[0]; index[0] += step_data[0])
   } \
 }
   
-void CkArrayMap::populateInitial(int arrayHdl,CkArrayOptions& options,void *ctorMsg,CkArray *mgr)
-{
+void CkArrayMap::populateInitial(int arrayHdl, CkArrayOptions& options, void* ctorMsg, CkArray* mgr) {
   CkArrayIndex start = options.getStart();
   CkArrayIndex end = options.getEnd();
   CkArrayIndex step = options.getStep();
-	if (end.nInts==0) {
-          CkFreeMsg(ctorMsg);
-          return;
-        }
-	int thisPe=CkMyPe();
-        /* The CkArrayIndex is supposed to have at most 3 dimensions, which
-           means that all the fields are ints, and numElements.nInts represents
-           how many of them are used */
-        CKARRAYMAP_POPULATE_INITIAL(CMK_RANK_0(procNum(arrayHdl,idx))==thisPe);
 
+  if (end.nInts == 0) {
+    CkFreeMsg(ctorMsg);
+    return;
+  }
 
-	mgr->doneInserting();
-	CkFreeMsg(ctorMsg);
+  int thisPe = CkMyPe();
+
+  CKARRAYMAP_POPULATE_INITIAL(CMK_RANK_0(procNum(arrayHdl,idx))==thisPe);
+
+  mgr->doneInserting();
+  CkFreeMsg(ctorMsg);
 }
 
 void CkArrayMap::storeCkArrayOpts(CkArrayOptions options) {
