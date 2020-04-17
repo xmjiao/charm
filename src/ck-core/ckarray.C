@@ -19,7 +19,7 @@ CProxy_foo::ckNew(msg,n);
   CkArray::CkArray
    CkLocMgr::populateInitial(numInitial) -> CkArrayMap::populateInitial(numInitial)
     for (idx=...)
-     if (map->procNum(idx)==thisPe) 
+     if (map->homePe(idx)==thisPe)
       CkArray::insertInitial
        CkArray::prepareCtorMsg
        CkArray::insertElement
@@ -901,7 +901,7 @@ int CkArray::findInitialHostPe(const CkArrayIndex &idx, int proposedPe)
   int hostPe = locMgr->whichPE(idx);
 
   if (hostPe == -1 && proposedPe == -1)
-    return procNum(idx);
+    return homePe(idx);
   if (hostPe == -1)
     return proposedPe;
   if (proposedPe == -1)

@@ -248,7 +248,7 @@ namespace Ck { namespace IO {
           contribute(closed);
         }
 
-        int procNum(int arrayHdl,const CkArrayIndex &element)
+        int homePe(int arrayHdl,const CkArrayIndex &element)
         {
 #if 0
           int peIndex = stripeIndex % opts.activePEs;
@@ -394,7 +394,7 @@ namespace Ck { namespace IO {
         Map()
           { }
 
-        int procNum(int arrayHdl, const CkArrayIndex &element) {
+        int homePe(int arrayHdl, const CkArrayIndex &element) {
           return 0;
         }
       };

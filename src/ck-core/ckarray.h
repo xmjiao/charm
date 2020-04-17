@@ -591,7 +591,6 @@ public:
   inline CkLocMgr *getLocMgr(void) {return locMgr;}
   inline const CkArrayIndex &getNumInitial(void) const {return numInitial;}
   inline int homePe(const CkArrayIndex &idx) const {return locMgr->homePe(idx);}
-  inline int procNum(const CkArrayIndex &idx) const {return locMgr->procNum(idx);}
 
   /// Return the last known processor for this array index.
   /// Valid for any possible array index.

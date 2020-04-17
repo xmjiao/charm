@@ -116,9 +116,7 @@ public:
   virtual void unregisterArray(int idx);
   virtual void storeCkArrayOpts(CkArrayOptions options);
   virtual void populateInitial(int arrayHdl,CkArrayOptions& options,void *ctorMsg,CkArray *mgr);
-  virtual int procNum(int arrayHdl,const CkArrayIndex &element) =0;
-  virtual int homePe(int arrayHdl,const CkArrayIndex &element)
-             { return procNum(arrayHdl, element); }
+  virtual int homePe(int arrayHdl,const CkArrayIndex &element) =0;
 
   virtual void pup(PUP::er &p);
 
@@ -309,7 +307,6 @@ typedef std::unordered_map<CmiUInt8, CkMigratable*> ElemMap;
 
           return CMK_RANK_0(id >> 24);
         }
-	inline int procNum(const CkArrayIndex &idx) const {return CMK_RANK_0(map->procNum(mapHandle,idx));}
 	inline bool isHome (const CkArrayIndex &idx) const {return (bool)(homePe(idx)==CkMyPe());}
   int whichPE(const CkArrayIndex &idx) const;
   int whichPE(const CmiUInt8 id) const;
