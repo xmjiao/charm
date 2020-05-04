@@ -283,6 +283,7 @@ static void * combineMessage(int *size, void *data, void **remote, int count)
   msg->procs = (_procInfo*)((char*)msg + sizeof(hostnameMsg));
   msg->n = nprocs;
   CmiSetHandler((char *)msg, CpvAccess(cpuTopoHandlerIdx));
+  CmiPrintf("[%d][%d][%d] ******** combineMessage reduction fn msg is %p *******\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg);
 
   int n=0;
   hostnameMsg *m = (hostnameMsg*)data;
@@ -512,6 +513,7 @@ extern "C" void LrtsInitCpuTopo(char **argv)
   CmiNodeAllBarrier();
   if (_noip) return; 
 
+  CmiPrintf("[%d][%d][%d] ***** Init CmiReduce ***** msg is %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg);
     /* prepare a msg to send */
   msg = (hostnameMsg *)CmiAlloc(sizeof(hostnameMsg)+sizeof(_procInfo));
   msg->n = 1;

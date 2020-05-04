@@ -181,8 +181,8 @@ class zerocopyObject : public CBase_zerocopyObject{
       delete m;
 
       // check that all sends and recvs have completed and then advance
-      if(sdagZeroCopySentCounter == 2*num && sdagZeroCopyRecvCounter == num)
-        nextStep();
+      //if(sdagZeroCopySentCounter == 2*num && sdagZeroCopyRecvCounter == num)
+      //  nextStep();
     }
 
     void testZeroCopy(CProxy_Main mProxy){

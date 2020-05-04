@@ -2,7 +2,7 @@
 #include "cmitrackmessages.h"
 #include <algorithm>
 
-#define DEBUG(x) //x
+#define DEBUG(x) x
 
 // boolean set if user passes +trackMsgs (used to determine if tracking is enabled)
 bool trackMessages;
@@ -124,6 +124,10 @@ void CmiMessageTrackerCharmInit(charmLevelFn fn) {
 void CmiMessageTrackerInit() {
 
   DEBUG(CmiPrintf("[%d][%d][%d] CmiMessageTrackerInit\n", CmiMyPe(), CmiMyNode(), CmiMyRank());)
+  //CmiPrintf("[%d][%d][%d] CmiMessageTrackerInit\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+
+  CpvInitialize(CmiIntMsgInfoMap, sentUniqMsgIds);
+
   CpvInitialize(int, uniqMsgId);
   CpvAccess(uniqMsgId) = 0;
 
@@ -149,7 +153,15 @@ inline void insertUniqIdEntry(char *msg, int destPe) {
   int uniqId = getNewUniqId();
 
   CMI_UNIQ_MSG_ID(msg) = uniqId;
-  CMI_SRC_PE(msg)      = CmiMyPe();
+
+  if(CmiMyRank() == CmiMyNodeSize()) {
+    CmiPrintf("[%d][%d][%d] ################### sending from comm thread nodeSize=%d, mynode=%d, CmiNodeOf(CmiMyPe())=%d, myrank=%d, CmiRankOf(CmiMyPe())=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CmiMyNodeSize(), CmiMyNode(), CmiNodeOf(CmiMyPe()), CmiMyRank(), CmiRankOf(CmiMyPe()));
+    CMI_SRC_PE(msg) = -1 - CmiMyNode();
+    //CMI_SRC_PE(msg) = CmiMyPe();
+
+  } else {
+    CMI_SRC_PE(msg) = CmiMyPe();
+  }
 
   msgInfo info;
   info.type = CMI_MSG_LAYER_TYPE(msg);
@@ -170,8 +182,8 @@ inline void insertUniqIdEntry(char *msg, int destPe) {
 void addToTracking(char *msg, int destPe) {
 
   // Do not track ack messages
-  if(CmiGetHandler(msg) == CpvAccess(msgTrackHandler)) {
-    CMI_UNIQ_MSG_ID(msg) = -2;
+  if(CmiGetHandler(msg) == CpvAccess(msgTrackHandler) || CMI_UNIQ_MSG_ID(msg) == -14) {
+    CMI_UNIQ_MSG_ID(msg) = -14;
     CMI_SRC_PE(msg)      = CmiMyPe();
     return;
   }
@@ -216,23 +228,51 @@ void sendTrackingAck(char *msg) {
 
   if(uniqId <= 0) {
 
-    //CmiPrintf("[%d][%d][%d] Receiver received message with invalid id:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId);
-    CmiAbort("[%d][%d][%d] Receiver received message with invalid id:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId);
+    CmiPrintf("[%d][%d][%d] Receiver received message with invalid id:%d and msg is %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, msg);
+    //CmiAbort("[%d][%d][%d] Receiver received message with invalid id:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId);
 
   } else {
 
     trackingAckMsg *ackMsg = (trackingAckMsg *)CmiAlloc(sizeof(trackingAckMsg));
     ackMsg->senderUniqId = CMI_UNIQ_MSG_ID(msg);
 
+    int srcPe = CMI_SRC_PE(msg);
+
     CMI_SRC_PE(ackMsg)      = CmiMyPe();
+    CMI_UNIQ_MSG_ID(ackMsg) = -14;
     // To deal with messages that get enqueued twice
     markAcked(msg);
 
     CmiSetHandler(ackMsg, CpvAccess(msgTrackHandler));
+#if CMK_SMP
+    if(srcPe < 0) {
+      // sent from the comm thread
+      srcPe = -1 * (srcPe + 1);
 
-    DEBUG(CmiPrintf("[%d][%d][%d] ACKING with uniqId:%d back to pe:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId, CMI_SRC_PE(msg));)
+      DEBUG(CmiPrintf("[%d][%d][%d] ######## Send from comm thread received and source node is %d \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), srcPe);)
+      if(srcPe == CmiMyNode()) {
+        //DEBUG(CmiPrintf("[%d][%d][%d] @@@@@@@@@@@@@@ Sending to my own comm thread dest Rank = %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_DEST_RANK(ackMsg));)
+        DEBUG(CmiPrintf("[%d][%d][%d] @@@@@@@@@@@@@@ Sending to my own comm thread \n", CmiMyPe(), CmiMyNode(), CmiMyRank());)
+        CmiBecomeImmediate(ackMsg); // make it IMMEDIATE so that it is received on the comm thread
+        DEBUG(CmiPrintf("[%d][%d][%d] ACKING with uniqId:%d back to node:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId, srcPe);)
+        //CmiSyncNodeSendAndFree(srcPe, sizeof(trackingAckMsg), ackMsg);
+        CmiPushPE(CmiMyNodeSize(), ackMsg);
 
-    CmiSyncSendAndFree(CMI_SRC_PE(msg), sizeof(trackingAckMsg), ackMsg);
+      } else {
+        //DEBUG(CmiPrintf("[%d][%d][%d] (((((((((((( Sending to my other comm thread %d and dest rank =%d \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), srcPe, CMI_DEST_RANK(ackMsg));)
+        DEBUG(CmiPrintf("[%d][%d][%d] (((((((((((( Sending to my other comm thread %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), srcPe);)
+        CmiBecomeImmediate(ackMsg); // make it IMMEDIATE so that it is received on the comm thread
+        DEBUG(CmiPrintf("[%d][%d][%d] ACKING with uniqId:%d back to node:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId, srcPe);)
+        CmiSyncNodeSendAndFree(srcPe, sizeof(trackingAckMsg), ackMsg);
+      }
+
+      //srcNode = CmiNodeOf(srcPe); // send it to source node
+    } else
+#endif
+    {
+      DEBUG(CmiPrintf("[%d][%d][%d] ACKING with uniqId:%d back to pe:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId, srcPe);)
+      CmiSyncSendAndFree(CMI_SRC_PE(msg), sizeof(trackingAckMsg), ackMsg);
+    }
   }
 }
 
