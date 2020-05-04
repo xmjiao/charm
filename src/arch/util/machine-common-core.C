@@ -768,6 +768,9 @@ if (  MSG_STATISTIC)
 
 #if CMK_NODE_QUEUE_AVAILABLE
 static void CmiSendNodeSelf(char *msg) {
+#if CMK_ERROR_CHECKING
+    if(trackMessages) addToTracking(msg, CmiMyNode());
+#endif
 #if CMK_IMMEDIATE_MSG
     if (CmiIsImmediate(msg)) {
         CmiPushImmediateMsg(msg);
