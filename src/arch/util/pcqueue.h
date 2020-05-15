@@ -18,6 +18,7 @@
 #ifndef __PCQUEUE__
 #define __PCQUEUE__
 
+#include "cmitrackmessages.h"
 #include "conv-config.h"
 
 /*****************************************************************************
@@ -52,6 +53,9 @@ typedef int PCQueue_CmiMemoryAtomicInt;
 #define PCQueue_CmiMemoryAtomicDecrement(k, mem) ((k)--)
 #define PCQueue_CmiMemoryAtomicLoad(k, mem)      (k)
 #define PCQueue_CmiMemoryAtomicStore(k, v, mem)  ((k) = (v))
+
+
+
 #else
 #define PCQueue_CmiMemoryReadFence               CmiMemoryReadFence
 #define PCQueue_CmiMemoryWriteFence              CmiMemoryWriteFence
@@ -59,6 +63,8 @@ using PCQueue_CmiMemoryAtomicInt = std::atomic<int>;
 #define PCQueue_CmiMemoryAtomicIncrement(k, mem) std::atomic_fetch_add_explicit(&(k), 1, (mem))
 #define PCQueue_CmiMemoryAtomicDecrement(k, mem) std::atomic_fetch_sub_explicit(&(k), 1, (mem))
 #define PCQueue_CmiMemoryAtomicLoad(k, mem)      std::atomic_load_explicit(&(k), (mem))
+
+#warning "atomics compiled in"
 #define PCQueue_CmiMemoryAtomicStore(k, v, mem)  std::atomic_store_explicit(&(k), (v), (mem))
 #endif
 
@@ -71,6 +77,7 @@ using PCQueue_CmiMemoryAtomicInt = std::atomic<int>;
  * is only for experimental usage.
  */
 #if !USE_SIMPLE_PCQUEUE
+# warning "!use_simple_pcqueue"
 
 typedef struct CircQueueStruct
 {
@@ -195,6 +202,9 @@ static char *PCQueuePop(PCQueue Q)
 #if CMK_PCQUEUE_LOCK
       CmiUnlock(Q->lock);
 #endif
+      if(CMI_UNIQ_MSG_ID(data) == -14) {
+         CmiPrintf("[%d][%d][%d] Ack msg (in PCQueuePop) uniqId=%d, srcPe=%d, pushing msg %p into 1:%p, pull:%d, PCQueueSize=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_UNIQ_MSG_ID(data), CMI_SRC_PE(data), data, circ, pull, PCQueueSize);
+      }
       return data;
     }
     else { /* queue seems to be empty. The producer may be adding something
@@ -244,8 +254,16 @@ static void PCQueuePush(PCQueue Q, char *data)
     Q->tail->next = circ;
     Q->tail = circ;
   }
+  if(CMI_UNIQ_MSG_ID(data) == -14) {
+     CmiPrintf("[%d][%d][%d] Ack msg (in PCQueuePush) uniqId=%d, srcPe=%d, pushing msg %p into circ1:%p, push:%d, &(circ1->data[push]) %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_UNIQ_MSG_ID(data), CMI_SRC_PE(data), data, circ1, push, &(circ1->data[push]));
+  }
 
-  PCQueue_CmiMemoryAtomicStore(circ1->data[push], data, std::memory_order_release);
+  //PCQueue_CmiMemoryAtomicStore(circ1->data[push], data, std::memory_order_release);
+
+  std::atomic_store_explicit(&(circ1->data[push]), (data), (std::memory_order_release));
+
+
+
   PCQueue_CmiMemoryAtomicIncrement(Q->len, std::memory_order_relaxed);
 
 #if CMK_PCQUEUE_LOCK || CMK_PCQUEUE_PUSH_LOCK

@@ -467,6 +467,9 @@ void CmiPushPE(int rank,void *msg) {
 #elif CMK_SMP_MULTIQ
     CMIQueuePush(cs->recv[CmiGetState()->myGrpIdx], (char *)msg);
 #else
+    if(CMI_UNIQ_MSG_ID(msg) == -14) {
+      CmiPrintf("[%d][%d][%d] Ack msg (Just before CMIQueuePusyh) uniqId=%d, srcPe=%d, enqueuing msg %p into queue %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg), msg, cs->recv);
+    }
     CMIQueuePush(cs->recv,(char*)msg);
 #endif
 
@@ -535,6 +538,10 @@ static INLINE_KEYWORD void handleOneRecvedMsg(int size, char *msg) {
       return;
     }
 #endif
+
+    if(CMI_UNIQ_MSG_ID(msg) == -14) {
+      CmiPrintf("[%d][%d][%d] Ack msg 1 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+    }
 
     int isBcastMsg = 0;
 #if CMK_BROADCAST_SPANNING_TREE || CMK_BROADCAST_HYPERCUBE
@@ -768,6 +775,7 @@ if (  MSG_STATISTIC)
 
 #if CMK_NODE_QUEUE_AVAILABLE
 static void CmiSendNodeSelf(char *msg) {
+    CmiPrintf("[%d][%d][%d] ************** CmiSendNodeSelf\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
 #if CMK_ERROR_CHECKING
     if(trackMessages) addToTracking(msg, CmiMyNode());
 #endif
@@ -835,6 +843,7 @@ if (  MSG_STATISTIC)
     msg_histogram[ret_log]++;
 }
 #endif
+        CmiPrintf("[%d][%d][%d] ************** CmiInterFreeNodeSendFn destNode:%d, first pe of destNode:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), destNode, CmiNodeFirst(destNode));
         CmiInterSendNetworkFunc(CmiNodeFirst(destNode), partition, size, msg, P2P_SYNC);
     }
 #if CMK_PERSISTENT_COMM

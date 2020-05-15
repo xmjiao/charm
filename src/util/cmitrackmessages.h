@@ -26,6 +26,7 @@ typedef std::unordered_map<int, msgInfo> CmiIntMsgInfoMap;
 struct trackingAckMsg {
   char core[CmiMsgHeaderSizeBytes];
   int senderUniqId;
+  int senderPe;
 };
 
 typedef int (*charmLevelFn)(void *msg);

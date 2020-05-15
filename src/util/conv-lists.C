@@ -1,5 +1,6 @@
 #include "conv-lists.h"
 #include "cklists.h"
+#include "cmitrackmessages.h"
 
 /** 
  * @file 
@@ -15,7 +16,18 @@ typedef CkQ<void*> _Fifo;
 CdsFifo CdsFifo_Create(void) { return (CdsFifo) new _Fifo(); }
 CdsFifo CdsFifo_Create_len(int len) { return (CdsFifo) new _Fifo(len); }
 void    CdsFifo_Enqueue(CdsFifo q, void *elt) { ((_Fifo*)q)->enq(elt); }
-void *  CdsFifo_Dequeue(CdsFifo q) { return ((_Fifo*)q)->deq(); }
+
+
+void *  CdsFifo_Dequeue(CdsFifo q) {
+  void *poppedMsg = ((_Fifo*)q)->deq();
+
+  //if(CMI_UNIQ_MSG_ID(poppedMsg) == -15) {
+  //  CmiPrintf("[%d][%d][%d] Ack poppedMsg (inside CdsFifo_Dequeue, poppedMsg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), poppedMsg, CMI_UNIQ_MSG_ID(poppedMsg), CMI_SRC_PE(poppedMsg));
+  //}
+  return poppedMsg;
+}
+
+
 void    CdsFifo_Push(CdsFifo q, void *elt) { ((_Fifo*)q)->push(elt); }
 void *  CdsFifo_Pop(CdsFifo q) { return ((_Fifo*)q)->deq(); }
 void    CdsFifo_Destroy(CdsFifo q) { delete ((_Fifo*)q); }

@@ -1711,6 +1711,10 @@ void CmiHandleMessage(void *msg)
 #endif
 
 #if CMK_ERROR_CHECKING
+  if(CMI_UNIQ_MSG_ID(msg) == -14) {
+    CmiPrintf("[%d][%d][%d] Ack msg 2 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+  }
+
   // Do not send an ack for an ack message
   // Also, do not send an ack for already processed messages
   if(trackMessages && CmiGetHandler(msg) != CpvAccess(msgTrackHandler) && CMI_UNIQ_MSG_ID(msg) > -10) {
@@ -1825,24 +1829,74 @@ void *CsdNextMessage(CsdSchedulerState_t *s) {
 #if CMI_QD
 		  CpvAccess(cQdState)->mProcessed++;
 #endif
+        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+          CmiPrintf("[%d][%d][%d] Ack msg 8 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+        }
+
 		  return msg;	    
 		}
               CqsDequeue(s->schedQ,(void **)&msg);
-              if (msg!=NULL) return msg;
+              if (msg!=NULL) {
+        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+          CmiPrintf("[%d][%d][%d] Ack msg 9 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+        }
+
+ 
+                
+                
+                return msg;
+              }
 	  }
 	
 	*(s->localCounter)=CsdLocalMax;
-	if ( NULL!=(msg=CmiGetNonLocal()) || 
-	     NULL!=(msg=CdsFifo_Dequeue(s->localQ)) ) {
+//	if ( NULL!=(msg=CmiGetNonLocal()) || 
+//	     NULL!=(msg=CdsFifo_Dequeue(s->localQ)) ) {
+//#if CMI_QD
+//            CpvAccess(cQdState)->mProcessed++;
+//#endif
+//        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+//          CmiPrintf("[%d][%d][%d] Ack msg 10 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+//        }
+//
+//
+//            return msg;
+//        }
+
+	if ( NULL!=(msg=CmiGetNonLocal())) {
 #if CMI_QD
             CpvAccess(cQdState)->mProcessed++;
 #endif
+        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+          CmiPrintf("[%d][%d][%d] Ack msg 10 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+        }
+
+            return msg;
+  }
+
+
+	     if( NULL!=(msg=CdsFifo_Dequeue(s->localQ)) ) {
+#if CMI_QD
+            CpvAccess(cQdState)->mProcessed++;
+#endif
+        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+          CmiPrintf("[%d][%d][%d] Ack msg 10.5 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+        }
+
+
             return msg;
         }
+
+
+
 #if CMK_GRID_QUEUE_AVAILABLE
 	/*#warning "CsdNextMessage: CMK_GRID_QUEUE_AVAILABLE" */
 	CqsDequeue (s->gridQ, (void **) &msg);
 	if (msg != NULL) {
+        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+          CmiPrintf("[%d][%d][%d] Ack msg 11 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+        }
+
+
 	  return (msg);
 	}
 #endif
@@ -1850,17 +1904,28 @@ void *CsdNextMessage(CsdSchedulerState_t *s) {
 #if CMK_OMP
 	msg = CmiSuspendedTaskPop();
 	if (msg != NULL) {
+        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+          CmiPrintf("[%d][%d][%d] Ack msg 12 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+        }
 	  return (msg);
 	}
 #endif
 	msg = TaskQueuePop((TaskQueue)s->taskQ);
 	if (msg != NULL) {
+        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+          CmiPrintf("[%d][%d][%d] Ack msg 13 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+        }
 	  return (msg);
 	}
 #endif
 #if CMK_NODE_QUEUE_AVAILABLE
 	/*#warning "CsdNextMessage: CMK_NODE_QUEUE_AVAILABLE" */
-	if (NULL!=(msg=CmiGetNonLocalNodeQ())) return msg;
+	if (NULL!=(msg=CmiGetNonLocalNodeQ())) {
+     if(CMI_UNIQ_MSG_ID(msg) == -14) {
+      CmiPrintf("[%d][%d][%d] Ack msg 13.5 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+    }
+    return msg;
+  }
 #if !CMK_NO_MSG_PRIOS
 	if (!CqsEmpty(s->nodeQ)
 	 && CqsPrioGT(CqsGetPriority(s->schedQ),
@@ -1868,7 +1933,12 @@ void *CsdNextMessage(CsdSchedulerState_t *s) {
 	  if(CmiTryLock(s->nodeLock) == 0) {
 	    CqsDequeue(s->nodeQ,(void **)&msg);
 	    CmiUnlock(s->nodeLock);
-	    if (msg!=NULL) return msg;
+	    if (msg!=NULL) {
+        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+          CmiPrintf("[%d][%d][%d] Ack msg 14 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+        }
+        return msg;
+      }
 	  }
 	}
 #endif
@@ -1876,12 +1946,21 @@ void *CsdNextMessage(CsdSchedulerState_t *s) {
 #if CMK_OBJECT_QUEUE_AVAILABLE
 	/*#warning "CsdNextMessage: CMK_OBJECT_QUEUE_AVAILABLE"   */
 	if (NULL!=(msg=CdsFifo_Dequeue(s->objQ))) {
+        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+          CmiPrintf("[%d][%d][%d] Ack msg 15 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+        }
           return msg;
         }
 #endif
         if(!CsdLocalMax) {
 	  CqsDequeue(s->schedQ,(void **)&msg);
-          if (msg!=NULL) return msg;	    
+          if (msg!=NULL) { 
+        if(CMI_UNIQ_MSG_ID(msg) == -14) {
+          CmiPrintf("[%d][%d][%d] Ack msg 16 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+        }
+ 
+            return msg;	    
+          }
         }
 	return NULL;
 }
@@ -2059,8 +2138,7 @@ void CmiDeliverSpecificMsg(int handler)
 	return;
       } else {
 #if CMK_ERROR_CHECKING
-        if(trackMessages)
-          CmiAbort("CmiDeliverSpecificMsg: enqueing untracked message\n");
+        if(trackMessages) addToTracking((char *)msg, CmiMyPe());
 #endif
 	CdsFifo_Enqueue(localqueue, msg);
       }
@@ -2196,6 +2274,11 @@ void CthEnqueueNormalThread(CthThreadToken* token, int s,
 				   int pb,unsigned int *prio)
 {
   CmiSetHandler(token, CpvAccess(CthResumeNormalThreadIdx));
+  // Initialize token
+#if CMK_ERROR_CHECKING
+  CMI_UNIQ_MSG_ID(token) = -1;
+  CMI_MSG_LAYER_TYPE(token) = 0;
+#endif
 #if CMK_ERROR_CHECKING
   if(trackMessages) addToTracking((char *)token, CmiMyPe());
 #endif
@@ -2335,8 +2418,10 @@ void CsdInit(char **argv)
    #endif
 
 #if CMK_OBJECT_QUEUE_AVAILABLE
+#warning "object queue initialized"
   CpvInitialize(Queue, CsdObjQueue);
   CpvAccess(CsdObjQueue) = CdsFifo_Create();
+   CmiPrintf("[%d][%d][%d] Object Queue created and initialized to %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CpvAccess(CsdObjQueue));
 #endif
 
 #if CMK_NODE_QUEUE_AVAILABLE
