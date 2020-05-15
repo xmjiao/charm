@@ -73,8 +73,8 @@ int CkRegisterEpInternal(const char *name, CkCallFnPtr call, int msgIdx, int cha
   int epIdx = _entryTable.add(e);
 
 #if CMK_ERROR_CHECKING
-  if(trackMessages && CmiMyPe() == 0)
-    CmiPrintf("[%d][%d][%d] CkRegisterEpInternal name:%s, msgIdx:%d, chareIdx:%d, epIdx:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), name, msgIdx, chareIdx, epIdx);
+  //if(trackMessages && CmiMyPe() == 0)
+  //  CmiPrintf("[%d][%d][%d] CkRegisterEpInternal name:%s, msgIdx:%d, chareIdx:%d, epIdx:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), name, msgIdx, chareIdx, epIdx);
 #endif
 
   return epIdx;

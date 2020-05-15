@@ -51,7 +51,13 @@ void _receiveTrackingAck(trackingAckMsg *ackMsg) {
       info.destPes.erase(iter2);
 
     } else {
-      CmiAbort("[%d][%d][%d] Sender Invalid Pe:%d returned back for msg id:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_SRC_PE(ackMsg), ackMsg->senderUniqId);
+      CmiPrintf("[%d][%d][%d] Sender valid dest pes for msgId:%d are:\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId);
+      for(int i=0; i<info.destPes.size(); i++) {
+        CmiPrintf("[%d][%d][%d] Pe:%d = [%d]\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), i, info.destPes[i]);
+      }
+      //CmiPrintf("[%d][%d][%d] *********************** Sender Invalid Pe:%d (other Pe:%d) returned back for msg id:%d and msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_SRC_PE(ackMsg), ackMsg->senderPe, ackMsg->senderUniqId, ackMsg);
+
+      CmiAbort("[%d][%d][%d] ******* Sender Invalid Pe:%d (other Pe:%d) returned back for msg id:%d and msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_SRC_PE(ackMsg), ackMsg->senderPe, ackMsg->senderUniqId);
     }
 
     if(info.destPes.size() == 0) { // last count, remove map entry
@@ -235,6 +241,7 @@ void sendTrackingAck(char *msg) {
 
     trackingAckMsg *ackMsg = (trackingAckMsg *)CmiAlloc(sizeof(trackingAckMsg));
     ackMsg->senderUniqId = CMI_UNIQ_MSG_ID(msg);
+    ackMsg->senderPe = CmiMyPe();
 
     int srcPe = CMI_SRC_PE(msg);
 
@@ -270,7 +277,7 @@ void sendTrackingAck(char *msg) {
     } else
 #endif
     {
-      DEBUG(CmiPrintf("[%d][%d][%d] ACKING with uniqId:%d back to pe:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId, srcPe);)
+      DEBUG(CmiPrintf("[%d][%d][%d] ACKING with uniqId:%d back to pe:%d, CMI_SRC_PE(msg)=%d, CMI_SRC_PE(ackMsg)=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId, srcPe, CMI_SRC_PE(msg), CMI_SRC_PE(ackMsg));)
       CmiSyncSendAndFree(CMI_SRC_PE(msg), sizeof(trackingAckMsg), ackMsg);
     }
   }

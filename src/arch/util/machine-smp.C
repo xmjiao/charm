@@ -699,7 +699,10 @@ void CmiStateInit(int pe, int rank, CmiState state)
   state->myGrpIdx = rank % MULTIQ_GRPSIZE;
   state->curPolledIdx = 0;
 #endif
+
   state->localqueue = CdsFifo_Create();
+
+   CmiPrintf("[%d][%d][%d] local queue created to %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), state->localqueue);
   CmiIdleLock_init(&state->idle);
 }
 
