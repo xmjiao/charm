@@ -57,7 +57,7 @@ void _receiveTrackingAck(trackingAckMsg *ackMsg) {
       }
       //CmiPrintf("[%d][%d][%d] *********************** Sender Invalid Pe:%d (other Pe:%d) returned back for msg id:%d and msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_SRC_PE(ackMsg), ackMsg->senderPe, ackMsg->senderUniqId, ackMsg);
 
-      CmiAbort("[%d][%d][%d] ******* Sender Invalid Pe:%d (other Pe:%d) returned back for msg id:%d and msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_SRC_PE(ackMsg), ackMsg->senderPe, ackMsg->senderUniqId);
+      CmiAbort("[%d][%d][%d] ******* Sender Invalid Pe:%d (other Pe:%d) returned back for msg id:%d and msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_SRC_PE(ackMsg), ackMsg->senderPe, ackMsg->senderUniqId, ackMsg);
     }
 
     if(info.destPes.size() == 0) { // last count, remove map entry
@@ -196,8 +196,9 @@ void addToTracking(char *msg, int destPe) {
 
   // Do not track ack messages
   if(CmiGetHandler(msg) == CpvAccess(msgTrackHandler) || CMI_UNIQ_MSG_ID(msg) == -14) {
-    CMI_UNIQ_MSG_ID(msg) = -14;
-    CMI_SRC_PE(msg)      = CmiMyPe();
+    // Do nothing
+    //CMI_UNIQ_MSG_ID(msg) = -14;
+    //CMI_SRC_PE(msg)      = CmiMyPe();
     return;
   }
 
