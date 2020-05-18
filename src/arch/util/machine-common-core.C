@@ -569,21 +569,38 @@ static void SendToPeers(int size, char *msg) {
   * it should also be sent in a tree
   */
 
+//#if CMK_ERROR_CHECKING
+//  if(trackMessages && CMI_UNIQ_MSG_ID(msg) == -1) {
+//    // not yet tracked
+//    addToTracking(msg, CmiMyPe());
+//  }
+//#endif
+
   int exceptRank = CMI_DEST_RANK(msg);
   if (CMI_MSG_NOKEEP(msg)) {
     for (int i = 0; i < exceptRank; i++) {
       CmiReference(msg);
+      CmiPrintf("[%d][%d][%d] ^^^^^^^^ SendToPeers CmiReference pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
       CmiPushPE(i, msg);
     }
     for (int i = exceptRank + 1; i < CmiMyNodeSize(); i++) {
       CmiReference(msg);
+      CmiPrintf("[%d][%d][%d] ^^^^^^^^ SendToPeers CmiReference pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
       CmiPushPE(i, msg);
     }
   } else {
     for (int i = 0; i < exceptRank; i++) {
+      CmiPrintf("[%d][%d][%d] ######## SendToPeers Regular pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
+#if CMK_ERROR_CHECKING
+      if(trackMessages) addToTracking(msg, i);
+#endif
       CmiPushPE(i, CopyMsg(msg, size));
     }
     for (int i = exceptRank + 1; i < CmiMyNodeSize(); i++) {
+      CmiPrintf("[%d][%d][%d] ######## SendToPeers Regular pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
+#if CMK_ERROR_CHECKING
+    if(trackMessages) addToTracking(msg, i);
+#endif
       CmiPushPE(i, CopyMsg(msg, size));
     }
   }
@@ -1964,6 +1981,12 @@ static char *CopyMsg(char *msg, int len) {
     }
 #endif
     memcpy(copy, msg, len);
+//#if CMK_ERROR_CHECKING
+//    if(trackMessages) {
+//      CMI_UNIQ_MSG_ID(copy) = CMI_UNIQ_MSG_ID(msg);
+//      CMI_SRC_PE(copy) = CMI_SRC_PE(msg);
+//    }
+//#endif
     return copy;
 }
 

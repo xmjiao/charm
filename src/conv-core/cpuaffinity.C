@@ -1223,6 +1223,8 @@ void CmiInitCPUAffinity(char **argv)
   msg->node = CmiMyNode();
   msg->pe = CmiMyPe();
   msg->ip = myip;
+
+  CmiPrintf("[%d][%d][%d] Sending hostnameMsg %p to 0 with cpu affinity handler %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, cpuAffinityHandlerIdx);
   CmiSyncSendAndFree(0, sizeof(hostnameMsg), (void *)msg);
 
   if (CmiMyPe() == 0) {

@@ -2,7 +2,7 @@
 #include "cmitrackmessages.h"
 #include <algorithm>
 
-#define DEBUG(x) //x
+#define DEBUG(x) x
 
 // boolean set if user passes +trackMsgs (used to determine if tracking is enabled)
 bool trackMessages;
@@ -188,9 +188,16 @@ inline void insertUniqIdEntry(char *msg, int destPe) {
     info.ep = 0;
   }
 
-  DEBUG(CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe);)
+  //info.nodeLevel = nodeLevel;
+
+  DEBUG(CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, msg);)
   CpvAccess(sentUniqMsgIds).insert({uniqId, info});
 }
+
+
+//void addToTrackingWithinNode(char *msg, int destPe) {
+//
+//}
 
 void addToTracking(char *msg, int destPe) {
 
@@ -242,8 +249,8 @@ void sendTrackingAck(char *msg) {
 
   if(uniqId <= 0) {
 
-    CmiPrintf("[%d][%d][%d] Receiver received message with invalid id:%d and msg is %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, msg);
-    //CmiAbort("[%d][%d][%d] Receiver received message with invalid id:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId);
+    //CmiPrintf("[%d][%d][%d] Receiver received message with invalid id:%d and msg is %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, msg);
+    CmiAbort("[%d][%d][%d] Receiver received message %p with invalid id:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, uniqId);
 
   } else {
 
