@@ -37,6 +37,7 @@ void _receiveTrackingAck(trackingAckMsg *ackMsg) {
   CmiIntMsgInfoMap::iterator iter;
   std::vector<int>::iterator iter2;
   int uniqId = ackMsg->senderUniqId;
+  int dest = CMI_SRC_PE(ackMsg);
   iter = CpvAccess(sentUniqMsgIds).find(uniqId);
   msgInfo info;
 
@@ -44,7 +45,10 @@ void _receiveTrackingAck(trackingAckMsg *ackMsg) {
 
     info = iter->second;
 
-    iter2 = find(info.destPes.begin(), info.destPes.end(), CMI_SRC_PE(ackMsg));
+    if(info.nodeLevel)
+      dest = CmiNodeOf(dest);
+
+    iter2 = find(info.destPes.begin(), info.destPes.end(), dest);
 
     if(iter2 != info.destPes.end()) {
       // element found, remove it
@@ -57,7 +61,7 @@ void _receiveTrackingAck(trackingAckMsg *ackMsg) {
       }
       //CmiPrintf("[%d][%d][%d] *********************** Sender Invalid Pe:%d (other Pe:%d) returned back for msg id:%d and msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_SRC_PE(ackMsg), ackMsg->senderPe, ackMsg->senderUniqId, ackMsg);
 
-      CmiAbort("[%d][%d][%d] ******* Sender Invalid Pe:%d (other Pe:%d) returned back for msg id:%d and msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_SRC_PE(ackMsg), ackMsg->senderPe, ackMsg->senderUniqId, ackMsg);
+      CmiAbort("[%d][%d][%d] ******* Sender Invalid Pe:%d (other Pe:%d) returned back for msg id:%d and msg:%p and nodeLevel is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), dest, ackMsg->senderPe, ackMsg->senderUniqId, ackMsg, info.nodeLevel);
     }
 
     if(info.destPes.size() == 0) { // last count, remove map entry
@@ -162,13 +166,14 @@ inline int getNewUniqId() {
   return ++CpvAccess(uniqMsgId);
 }
 
-inline void insertUniqIdEntry(char *msg, int destPe) {
+inline void insertUniqIdEntry(char *msg, int destPe, bool nodeLevel) {
   int uniqId = getNewUniqId();
 
   CMI_UNIQ_MSG_ID(msg) = uniqId;
 
   if(CmiMyRank() == CmiMyNodeSize()) {
-    CmiPrintf("[%d][%d][%d] ################### sending from comm thread nodeSize=%d, mynode=%d, CmiNodeOf(CmiMyPe())=%d, myrank=%d, CmiRankOf(CmiMyPe())=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CmiMyNodeSize(), CmiMyNode(), CmiNodeOf(CmiMyPe()), CmiMyRank(), CmiRankOf(CmiMyPe()));
+
+    CmiPrintf("[%d][%d][%d] ################### sending from comm thread nodeSize=%d, mynode=%d, CmiNodeOf(CmiMyPe())=%d, myrank=%d, CmiRankOf(CmiMyPe())=%d     destPe = %d, destNode=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CmiMyNodeSize(), CmiMyNode(), CmiNodeOf(CmiMyPe()), CmiMyRank(), CmiRankOf(CmiMyPe()), destPe, CmiNodeOf(destPe));
     CMI_SRC_PE(msg) = -1 - CmiMyNode();
     //CMI_SRC_PE(msg) = CmiMyPe();
 
@@ -188,9 +193,9 @@ inline void insertUniqIdEntry(char *msg, int destPe) {
     info.ep = 0;
   }
 
-  //info.nodeLevel = nodeLevel;
+  info.nodeLevel = nodeLevel;
 
-  DEBUG(CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, msg);)
+  DEBUG(CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, isNodeLevel:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, nodeLevel, msg);)
   CpvAccess(sentUniqMsgIds).insert({uniqId, info});
 }
 
@@ -199,7 +204,7 @@ inline void insertUniqIdEntry(char *msg, int destPe) {
 //
 //}
 
-void addToTracking(char *msg, int destPe) {
+void addToTracking(char *msg, int destPe, bool nodeLevel) {
 
   // Do not track ack messages
   if(CmiGetHandler(msg) == CpvAccess(msgTrackHandler) || CMI_UNIQ_MSG_ID(msg) == -14) {
@@ -218,7 +223,7 @@ void addToTracking(char *msg, int destPe) {
 
   if(uniqId <= 0) {
     // uniqId not yet set
-    insertUniqIdEntry(msg, destPe);
+    insertUniqIdEntry(msg, destPe, nodeLevel);
   } else {
     // uniqId already set, increase count
     CmiIntMsgInfoMap::iterator iter;
@@ -232,7 +237,7 @@ void addToTracking(char *msg, int destPe) {
 
       DEBUG(CmiPrintf("[%d][%d][%d] INCREMENTING COUNTER uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe);)
     } else {
-      insertUniqIdEntry(msg, destPe);
+      insertUniqIdEntry(msg, destPe, nodeLevel);
     }
   }
 }
@@ -249,8 +254,8 @@ void sendTrackingAck(char *msg) {
 
   if(uniqId <= 0) {
 
-    //CmiPrintf("[%d][%d][%d] Receiver received message with invalid id:%d and msg is %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, msg);
-    CmiAbort("[%d][%d][%d] Receiver received message %p with invalid id:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, uniqId);
+    CmiPrintf("[%d][%d][%d] Receiver received message with invalid id:%d and msg is %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, msg);
+    //CmiAbort("[%d][%d][%d] Receiver received message %p with invalid id:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, uniqId);
 
   } else {
 
