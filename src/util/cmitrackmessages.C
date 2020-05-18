@@ -2,7 +2,7 @@
 #include "cmitrackmessages.h"
 #include <algorithm>
 
-#define DEBUG(x) x
+#define DEBUG(x) //x
 
 // boolean set if user passes +trackMsgs (used to determine if tracking is enabled)
 bool trackMessages;

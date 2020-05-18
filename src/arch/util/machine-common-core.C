@@ -467,9 +467,9 @@ void CmiPushPE(int rank,void *msg) {
 #elif CMK_SMP_MULTIQ
     CMIQueuePush(cs->recv[CmiGetState()->myGrpIdx], (char *)msg);
 #else
-    if(CMI_UNIQ_MSG_ID(msg) == -14) {
-      CmiPrintf("[%d][%d][%d] Ack msg (Just before CMIQueuePusyh) uniqId=%d, srcPe=%d, enqueuing msg %p into queue %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg), msg, cs->recv);
-    }
+    //if(CMI_UNIQ_MSG_ID(msg) == -14) {
+    //  CmiPrintf("[%d][%d][%d] Ack msg (Just before CMIQueuePusyh) uniqId=%d, srcPe=%d, enqueuing msg %p into queue %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg), msg, cs->recv);
+    //}
     CMIQueuePush(cs->recv,(char*)msg);
 #endif
 
@@ -539,9 +539,9 @@ static INLINE_KEYWORD void handleOneRecvedMsg(int size, char *msg) {
     }
 #endif
 
-    if(CMI_UNIQ_MSG_ID(msg) == -14) {
-      CmiPrintf("[%d][%d][%d] Ack msg 1 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
-    }
+    //if(CMI_UNIQ_MSG_ID(msg) == -14) {
+    //  CmiPrintf("[%d][%d][%d] Ack msg 1 being enqueued msg:%p, uniqId=%d, srcPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, CMI_UNIQ_MSG_ID(msg), CMI_SRC_PE(msg));
+    //}
 
     int isBcastMsg = 0;
 #if CMK_BROADCAST_SPANNING_TREE || CMK_BROADCAST_HYPERCUBE
