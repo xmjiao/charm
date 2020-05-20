@@ -174,7 +174,7 @@ inline void insertUniqIdEntry(char *msg, int destPe, bool nodeLevel) {
 #if CMK_SMP
   if(CmiMyRank() == CmiMyNodeSize()) {
 
-    CmiPrintf("[%d][%d][%d] ################### sending from comm thread nodeSize=%d, mynode=%d, CmiNodeOf(CmiMyPe())=%d, myrank=%d, CmiRankOf(CmiMyPe())=%d     destPe = %d, destNode=%d, destRank=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CmiMyNodeSize(), CmiMyNode(), CmiNodeOf(CmiMyPe()), CmiMyRank(), CmiRankOf(CmiMyPe()), destPe, CmiNodeOf(destPe), CmiRankOf(destPe));
+    //CmiPrintf("[%d][%d][%d] Comm sender ################### sending from comm thread nodeSize=%d, mynode=%d, CmiNodeOf(CmiMyPe())=%d, myrank=%d, CmiRankOf(CmiMyPe())=%d     destPe = %d, destNode=%d, destRank=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CmiMyNodeSize(), CmiMyNode(), CmiNodeOf(CmiMyPe()), CmiMyRank(), CmiRankOf(CmiMyPe()), destPe, CmiNodeOf(destPe), CmiRankOf(destPe));
     //CMI_SRC_PE(msg) = -1 - CmiMyNode();
     //CMI_SRC_PE(msg) = CmiMyPe();
     //CMI_SRC_PE(msg) = CmiMyPe();
@@ -202,6 +202,21 @@ inline void insertUniqIdEntry(char *msg, int destPe, bool nodeLevel) {
   info.nodeLevel = nodeLevel;
 
   DEBUG(CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, isNodeLevel:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, nodeLevel, msg);)
+
+  //if(CmiMyPe() == 0 && destPe == 2 && uniqId == 5) {
+  //  CmiPrintf("[%d][%d][%d] ==================== Buggy Case while adding @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+  //}
+
+  //if(CmiMyPe() == 0  && uniqId == 3) {
+  //  CmiPrintf("[%d][%d][%d] ==================== Buggy Case 2 while adding @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+  //}
+  //
+  if(CmiMyPe() == 0  && uniqId == 24) {
+    CmiPrintf("[%d][%d][%d] ==================== Buggy Case 3 while adding @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+  }
+
+
+
   CpvAccess(sentUniqMsgIds).insert({uniqId, info});
 }
 
@@ -236,12 +251,26 @@ void addToTracking(char *msg, int destPe, bool nodeLevel) {
     iter = CpvAccess(sentUniqMsgIds).find(uniqId);
 
     if(iter != CpvAccess(sentUniqMsgIds).end()) {
-      //iter->second.count++; // increment counter
-      iter->second.destPes.push_back(destPe);
-
       msgInfo info = iter->second;
 
-      DEBUG(CmiPrintf("[%d][%d][%d] INCREMENTING COUNTER uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe);)
+      if(nodeLevel != info.nodeLevel) {
+        // should add a new entry
+
+        CmiPrintf("[%d][%d][%d] nodeLevel mismatch for msg:%p with uniqId:%d, original bool is %d and new nodeLevel is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, uniqId, info.nodeLevel, nodeLevel);
+
+        insertUniqIdEntry(msg, destPe, nodeLevel);
+
+      } else {
+        //iter->second.count++; // increment counter
+        iter->second.destPes.push_back(destPe);
+
+        if(CmiMyPe() == 0 && destPe == 2 && uniqId == 5) {
+          CmiPrintf("[%d][%d][%d] ==================== Buggy Case while incrementing @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+        }
+
+        DEBUG(CmiPrintf("[%d][%d][%d] INCREMENTING COUNTER uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe);)
+
+      }
     } else {
       insertUniqIdEntry(msg, destPe, nodeLevel);
     }
@@ -273,8 +302,18 @@ void sendTrackingAck(char *msg) {
 
     CMI_SRC_PE(ackMsg)      = CmiMyPe();
     CMI_UNIQ_MSG_ID(ackMsg) = -14;
-    // To deal with messages that get enqueued twice
-    markAcked(msg);
+
+
+    if(CMI_MSG_NOKEEP(msg)) {
+      // Same message reused, ensure that the count drops to 1
+      if(CmiGetReference(msg) == 1) {
+        // To deal with messages that get enqueued twice
+        markAcked(msg);
+      }
+    } else {
+      // To deal with messages that get enqueued twice
+      markAcked(msg);
+    }
 
     CmiSetHandler(ackMsg, CpvAccess(msgTrackHandler));
 #if CMK_SMP
@@ -283,16 +322,16 @@ void sendTrackingAck(char *msg) {
         CmiBecomeImmediate(ackMsg); // make it IMMEDIATE so that it is received on the comm thread
 
         //DEBUG(CmiPrintf("[%d][%d][%d] @@@@@@@@@@@@@@ Sending to my own comm thread dest Rank = %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_DEST_RANK(ackMsg));)
-        CmiPrintf("[%d][%d][%d] ############# Sending back ack message to comm thread whose pe is %d and node is %d and explicitly saved node is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), srcPe, CmiNodeOf(srcPe), CMI_SRC_NODE(msg));
+        //CmiPrintf("[%d][%d][%d] Comm receiver ############# Sending back ack message to comm thread whose pe is %d and node is %d and explicitly saved node is %d and uniqId is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), srcPe, CmiNodeOf(srcPe), CMI_SRC_NODE(msg), CMI_UNIQ_MSG_ID(msg));
 
-      if(CMI_SRC_NODE(msg) == CMI_SRC_NODE(msg)) {
+      if(CMI_SRC_NODE(msg) == CmiMyNode()) {
         //DEBUG(CmiPrintf("[%d][%d][%d] @@@@@@@@@@@@@@ Sending to my own comm thread dest Rank = %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CMI_DEST_RANK(ackMsg));)
-        CmiPrintf("[%d][%d][%d] @@@@@@@@@@@@@@ Sending to my own comm thread to rank %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CmiMyNodeSize());
+        //CmiPrintf("[%d][%d][%d] @@@@@@@@@@@@@@ Sending to my own comm thread to rank %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CmiMyNodeSize());
         CmiPushPE(CmiMyNodeSize(), ackMsg);
       } else {
          //DEBUG(CmiPrintf("[%d][%d][%d] (((((((((((( Sending to my other comm thread %d and dest rank =%d \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), srcPe, CMI_DEST_RANK(ackMsg));)
-         CmiPrintf("[%d][%d][%d] (((((((((((( Sending to my other comm thread %d \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), srcPe);
-         CmiSyncNodeSendAndFree(srcPe, sizeof(trackingAckMsg), ackMsg);
+         //CmiPrintf("[%d][%d][%d] (((((((((((( Sending to my other comm thread pe:%d and node:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), srcPe, CMI_SRC_NODE(msg));
+         CmiSyncNodeSendAndFree(CMI_SRC_NODE(msg), sizeof(trackingAckMsg), ackMsg);
       }
 
     } else

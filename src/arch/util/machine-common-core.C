@@ -581,25 +581,33 @@ static void SendToPeers(int size, char *msg) {
     for (int i = 0; i < exceptRank; i++) {
       CmiReference(msg);
       CmiPrintf("[%d][%d][%d] ^^^^^^^^ SendToPeers CmiReference pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
+#if CMK_ERROR_CHECKING
+      if(trackMessages) addToTracking(msg, CmiMyNode()*CmiMyNodeSize() + i);
+#endif
+      //CmiAbort("[%d][%d][%d] ^^^^^^^^ SendToPeers CmiReference pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
       CmiPushPE(i, msg);
     }
     for (int i = exceptRank + 1; i < CmiMyNodeSize(); i++) {
       CmiReference(msg);
       CmiPrintf("[%d][%d][%d] ^^^^^^^^ SendToPeers CmiReference pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
+#if CMK_ERROR_CHECKING
+      if(trackMessages) addToTracking(msg, CmiMyNode()*CmiMyNodeSize() + i);
+#endif
+      //CmiAbort("[%d][%d][%d] ^^^^^^^^ SendToPeers CmiReference pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
       CmiPushPE(i, msg);
     }
   } else {
     for (int i = 0; i < exceptRank; i++) {
-      CmiPrintf("[%d][%d][%d] ######## SendToPeers Regular pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
+      CmiPrintf("[%d][%d][%d] ######## SendToPeers Regular 1 pushing msg:%p to index:%d, pe:%d (%d)\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i, CmiNodeFirst(CmiMyNode())+ i, CmiMyNode()*CmiMyNodeSize() + i);
 #if CMK_ERROR_CHECKING
-      if(trackMessages && CmiMyRank()!=CmiMyNodeSize()) addToTracking(msg, CmiMyPe() + i);
+      if(trackMessages) addToTracking(msg, CmiMyNode()*CmiMyNodeSize() + i);
 #endif
       CmiPushPE(i, CopyMsg(msg, size));
     }
     for (int i = exceptRank + 1; i < CmiMyNodeSize(); i++) {
-      CmiPrintf("[%d][%d][%d] ######## SendToPeers Regular pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
+      CmiPrintf("[%d][%d][%d] ######## SendToPeers Regular 2 pushing msg:%p to index:%d, pe:%d (%d)\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i, CmiNodeFirst(CmiMyNode())+ i, CmiMyNode()*CmiMyNodeSize() + i);
 #if CMK_ERROR_CHECKING
-      if(trackMessages && CmiMyRank()!=CmiMyNodeSize()) addToTracking(msg, CmiMyPe() + i);
+      if(trackMessages) addToTracking(msg, CmiMyNode()*CmiMyNodeSize() + i);
 #endif
       CmiPushPE(i, CopyMsg(msg, size));
     }
@@ -663,9 +671,16 @@ CpvExtern(int, _urgentSend);
 INLINE_KEYWORD CmiCommHandle CmiSendNetworkFunc(int destPE, int size, char *msg, int mode) {
   // Set the message as a regular message (defined in lrts-common.h)
   CMI_CMA_MSGTYPE(msg) = CMK_REG_NO_CMA_MSG;
+
 #if CMK_ERROR_CHECKING
-  if(trackMessages) addToTracking(msg, destPE);
+  if(trackMessages && CMI_UNIQ_MSG_ID(msg) == -1) {
+    CmiAbort("[%d][%d][%d] CmiSendNetworkFunc found the uniq id to be -1, hasn't been added\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+  }
 #endif
+
+//#if CMK_ERROR_CHECKING
+//  if(trackMessages) addToTracking(msg, destPE);
+//#endif
   return CmiInterSendNetworkFunc(destPE, CmiMyPartition(), size, msg, mode);
 }
 //the generic function that replaces the older one
@@ -788,6 +803,9 @@ if (  MSG_STATISTIC)
         msg_histogram[ret_log]++;
 }
 #endif
+//#if CMK_ERROR_CHECKING
+//        if(trackMessages) addToTracking(msg, destPE);
+//#endif
         return CmiSendNetworkFunc(destPE, size, msg, P2P_ASYNC);
     }
 }
@@ -797,7 +815,7 @@ if (  MSG_STATISTIC)
 static void CmiSendNodeSelf(char *msg) {
     CmiPrintf("[%d][%d][%d] ************** CmiSendNodeSelf\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
 #if CMK_ERROR_CHECKING
-    if(trackMessages) addToTracking(msg, CmiMyNode());
+    if(trackMessages) addToTracking(msg, CmiMyNode(), true);
 #endif
 #if CMK_IMMEDIATE_MSG
     if (CmiIsImmediate(msg)) {
@@ -889,6 +907,9 @@ if (  MSG_STATISTIC)
         if(ret_log >21) ret_log = 21;
         msg_histogram[ret_log]++;
 }
+#endif
+#if CMK_ERROR_CHECKING
+        if(trackMessages) addToTracking(msg, destNode, true);
 #endif
         return CmiSendNetworkFunc(CmiNodeFirst(destNode), size, msg, P2P_ASYNC);
     }

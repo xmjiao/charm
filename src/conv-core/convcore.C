@@ -2131,7 +2131,7 @@ void CmiDeliverSpecificMsg(int handler)
     else      msg = (int *)CdsFifo_Dequeue(localqueue);
     if (msg) {
       if (CmiGetHandler(msg)==handler) {
-  CmiPrintf("[%d][%d][%d] CmiDeliverSpecificMsg matched handler %d with msg %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), handler, msg);
+  //CmiPrintf("[%d][%d][%d] CmiDeliverSpecificMsg matched handler %d with msg %p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), handler, msg);
 #if CMI_QD
 	CpvAccess(cQdState)->mProcessed++;
 #endif
