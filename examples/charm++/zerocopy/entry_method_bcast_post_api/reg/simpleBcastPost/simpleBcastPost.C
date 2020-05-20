@@ -60,10 +60,10 @@ class Main : public CBase_Main{
     CkPrintf("[%d][%d][%d] Broadcasting source buffer %p with size %d\n", CkMyPe(), CkMyNode(), CmiMyRank(), buffer, bufferSize);
 
     // invoking bcast on chare array
-    arrProxy.recvLargeArray(CkSendBuffer(buffer, cb), bufferSize, doneCb);
+    //arrProxy.recvLargeArray(CkSendBuffer(buffer, cb), bufferSize, doneCb);
 
     // invoking bcast on group
-    grpProxy.recvLargeArray(CkSendBuffer(buffer, cb), bufferSize, doneCb);
+    //grpProxy.recvLargeArray(CkSendBuffer(buffer, cb), bufferSize, doneCb);
 
     // invoking bcast on nodegroup
     ngrpProxy.recvLargeArray(CkSendBuffer(buffer, cb), bufferSize, doneCb);
@@ -77,7 +77,7 @@ class Main : public CBase_Main{
   void done() {
     // Wait for 3 reductions to complete: Chare Array, Group, Nodegroup and
     // 3 more calls from zerocopySent callback method on completion of sending the buffer
-    if(++counter == 6) {
+    if(++counter == 2) {
       CkPrintf("[%d][%d][%d] All operations completed\n", CkMyPe(), CkMyNode(), CmiMyRank());
       CkExit();
     }

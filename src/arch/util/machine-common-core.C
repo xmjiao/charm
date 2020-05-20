@@ -813,7 +813,7 @@ if (  MSG_STATISTIC)
 
 #if CMK_NODE_QUEUE_AVAILABLE
 static void CmiSendNodeSelf(char *msg) {
-    CmiPrintf("[%d][%d][%d] ************** CmiSendNodeSelf\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+    //CmiPrintf("[%d][%d][%d] ************** CmiSendNodeSelf\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
 #if CMK_ERROR_CHECKING
     if(trackMessages) addToTracking(msg, CmiMyNode(), true);
 #endif
@@ -881,7 +881,7 @@ if (  MSG_STATISTIC)
     msg_histogram[ret_log]++;
 }
 #endif
-        CmiPrintf("[%d][%d][%d] ************** CmiInterFreeNodeSendFn destNode:%d, first pe of destNode:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), destNode, CmiNodeFirst(destNode));
+        //CmiPrintf("[%d][%d][%d] ************** CmiInterFreeNodeSendFn destNode:%d, first pe of destNode:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), destNode, CmiNodeFirst(destNode));
 #if CMK_ERROR_CHECKING
         if(trackMessages) addToTracking(msg, destNode, true);
 #endif

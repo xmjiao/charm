@@ -66,14 +66,22 @@ void _receiveTrackingAck(trackingAckMsg *ackMsg) {
 
     if(info.destPes.size() == 0) { // last count, remove map entry
       DEBUG(CmiPrintf("[%d][%d][%d] ERASING (uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d), remaining unacked messages = %zu \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, CpvAccess(sentUniqMsgIds).size());)
+      if(CmiMyPe() == 2 && uniqId == 11) {
+        DEBUG(CmiPrintf("[%d][%d][%d] ERASING (uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d), remaining unacked messages = %zu \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, CpvAccess(sentUniqMsgIds).size());)
+        //CmiPrintf("[%d][%d][%d] ==================== Buggy Case 3 while erasing @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+      }
       CpvAccess(sentUniqMsgIds).erase(iter);
 
     } else {
       DEBUG(CmiPrintf("[%d][%d][%d] DECREMENTING COUNTER (uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d), remaining unacked messages = %zu \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, CpvAccess(sentUniqMsgIds).size());)
+      if(CmiMyPe() == 2 && uniqId == 11) {
+        DEBUG(CmiPrintf("[%d][%d][%d] DECREMENTING COUNTER (uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d), remaining unacked messages = %zu \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, CpvAccess(sentUniqMsgIds).size());)
+        //CmiPrintf("[%d][%d][%d] ==================== Buggy Case 3 while decrementing @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+      }
     }
   } else {
     //CmiPrintf("[%d][%d][%d] Sender Invalid msg id:%d returned back\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId);
-    CmiAbort("[%d][%d][%d] Sender Invalid msg id:%d returned back\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId);
+    CmiAbort("[%d][%d][%d] Sender Invalid msg id:%d returned back from PE:%d node:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId, CMI_SRC_PE(ackMsg), CMI_SRC_NODE(ackMsg));
   }
   CmiFree(ackMsg);
 }
@@ -203,17 +211,23 @@ inline void insertUniqIdEntry(char *msg, int destPe, bool nodeLevel) {
 
   DEBUG(CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, isNodeLevel:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, nodeLevel, msg);)
 
+  CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, isNodeLevel:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, nodeLevel, msg);
+
+
+  if(CmiMyPe() == 2 && uniqId == 11) {
   //if(CmiMyPe() == 0 && destPe == 2 && uniqId == 5) {
-  //  CmiPrintf("[%d][%d][%d] ==================== Buggy Case while adding @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
-  //}
+    //CmiPrintf("[%d][%d][%d] ==================== Buggy Case while adding @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+    DEBUG(CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, isNodeLevel:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, nodeLevel, msg);)
+  }
 
   //if(CmiMyPe() == 0  && uniqId == 3) {
   //  CmiPrintf("[%d][%d][%d] ==================== Buggy Case 2 while adding @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
   //}
   //
-  if(CmiMyPe() == 0  && uniqId == 24) {
-    CmiPrintf("[%d][%d][%d] ==================== Buggy Case 3 while adding @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
-  }
+  //if(CmiMyPe() == 4  && uniqId == 7) {
+  //  CmiPrintf("[%d][%d][%d] ==================== Buggy Case 3 while adding @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+  //  DEBUG(CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, isNodeLevel:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, nodeLevel, msg);)
+  //}
 
 
 
@@ -237,7 +251,7 @@ void addToTracking(char *msg, int destPe, bool nodeLevel) {
 
   int uniqId = CMI_UNIQ_MSG_ID(msg);
 
-  if(uniqId == -12 || uniqId == -11) {
+  if(uniqId == -11 || uniqId == -12 || uniqId == -13) {
     // do not track
     return;
   }
@@ -256,7 +270,7 @@ void addToTracking(char *msg, int destPe, bool nodeLevel) {
       if(nodeLevel != info.nodeLevel) {
         // should add a new entry
 
-        CmiPrintf("[%d][%d][%d] nodeLevel mismatch for msg:%p with uniqId:%d, original bool is %d and new nodeLevel is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, uniqId, info.nodeLevel, nodeLevel);
+        //.CmiPrintf("[%d][%d][%d] nodeLevel mismatch for msg:%p with uniqId:%d, original bool is %d and new nodeLevel is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, uniqId, info.nodeLevel, nodeLevel);
 
         insertUniqIdEntry(msg, destPe, nodeLevel);
 
@@ -264,8 +278,9 @@ void addToTracking(char *msg, int destPe, bool nodeLevel) {
         //iter->second.count++; // increment counter
         iter->second.destPes.push_back(destPe);
 
-        if(CmiMyPe() == 0 && destPe == 2 && uniqId == 5) {
-          CmiPrintf("[%d][%d][%d] ==================== Buggy Case while incrementing @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+        if(CmiMyPe() == 2 && uniqId == 11) {
+          //CmiPrintf("[%d][%d][%d] ==================== Buggy Case while incrementing @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+          DEBUG(CmiPrintf("[%d][%d][%d] INCREMENTING COUNTER uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe);)
         }
 
         DEBUG(CmiPrintf("[%d][%d][%d] INCREMENTING COUNTER uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe);)
@@ -371,6 +386,11 @@ void sendTrackingAck(char *msg) {
 #endif
     {
       DEBUG(CmiPrintf("[%d][%d][%d] ACKING with uniqId:%d back to pe:%d, CMI_SRC_PE(msg)=%d, CMI_SRC_PE(ackMsg)=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId, srcPe, CMI_SRC_PE(msg), CMI_SRC_PE(ackMsg));)
+      if(uniqId == 11 && CMI_SRC_PE(msg) == 2 && CmiMyPe() == 2) {
+
+        DEBUG(CmiPrintf("[%d][%d][%d] ACKING with uniqId:%d back to pe:%d, CMI_SRC_PE(msg)=%d, CMI_SRC_PE(ackMsg)=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ackMsg->senderUniqId, srcPe, CMI_SRC_PE(msg), CMI_SRC_PE(ackMsg));)
+        //CmiPrintf("[%d][%d][%d] ==================== Buggy Case 3 while acking @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+      }
       CmiSyncSendAndFree(CMI_SRC_PE(msg), sizeof(trackingAckMsg), ackMsg);
     }
   }

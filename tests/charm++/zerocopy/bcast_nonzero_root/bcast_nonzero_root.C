@@ -67,25 +67,30 @@ class tester : public CBase_tester {
       DEBUG(CkPrintf("[%d][%d][%d] Broadcasting buffers to send only methods\n", CkMyPe(), CkMyNode(), CkMyRank());)
 
       // Test bcast sends
-      arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, thisIndex);
-      grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, thisIndex);
-      ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, thisIndex);
+//      arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, thisIndex);
+//      grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, thisIndex);
+//      ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, thisIndex);
+
+          arrProxy.recv_zerocopy_post(CkSendBuffer(srcBuffer), SIZE, thisIndex);
+          grpProxy.recv_zerocopy_post(CkSendBuffer(srcBuffer), SIZE, thisIndex);
+//          ngProxy.recv_zerocopy_post(CkSendBuffer(srcBuffer), SIZE, thisIndex);
+
     }
 
     void bcastDone() {
-      if(++counter == 3) {
+      if(++counter == 2) {
         counter = 0;
         testId++;
 
         if(testId == 1) {
 
-          DEBUG(CkPrintf("[%d][%d][%d] Broadcasting buffers to post methods\n", CkMyPe(), CkMyNode(), CkMyRank());)
-          // Test bcast sends
-          arrProxy.recv_zerocopy_post(CkSendBuffer(srcBuffer), SIZE, thisIndex);
-          grpProxy.recv_zerocopy_post(CkSendBuffer(srcBuffer), SIZE, thisIndex);
-          ngProxy.recv_zerocopy_post(CkSendBuffer(srcBuffer), SIZE, thisIndex);
-
-        } else if (testId == 2) {
+//          DEBUG(CkPrintf("[%d][%d][%d] Broadcasting buffers to post methods\n", CkMyPe(), CkMyNode(), CkMyRank());)
+//          // Test bcast sends
+//          arrProxy.recv_zerocopy_post(CkSendBuffer(srcBuffer), SIZE, thisIndex);
+//          grpProxy.recv_zerocopy_post(CkSendBuffer(srcBuffer), SIZE, thisIndex);
+//          ngProxy.recv_zerocopy_post(CkSendBuffer(srcBuffer), SIZE, thisIndex);
+//
+//        } else if (testId == 2) {
 
           CkPrintf("[%d][%d][%d] Testing with source pe:%d completed\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
 

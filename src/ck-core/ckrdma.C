@@ -346,13 +346,23 @@ void invokeCallback(void *cb, int pe, CkNcpyBuffer &buff) {
 void enqueueNcpyMessage(int destPe, void *msg){
   // invoke the charm message handler to enqueue the messsage
 #if CMK_SMP && !CMK_ENABLE_ASYNC_PROGRES
-  if(destPe == CkMyPe()) // invoked from the same worker thread, call message handler directly
+  if(destPe == CkMyPe()) {// invoked from the same worker thread, call message handler directly
+#if CMK_ERROR_CHECKING
+      if(trackMessages) CMI_UNIQ_MSG_ID(msg) = -13;
+#endif
     CmiHandleMessage(msg);
-  else                   // invoked from the comm thread, so send message to the worker thread
+  } else {                   // invoked from the comm thread, so send message to the worker thread
+#if CMK_ERROR_CHECKING
+    if(trackMessages) addToTracking((char *)msg, destPe);
+#endif
     CmiPushPE(CmiRankOf(destPe), msg);
+  }
 #else
   // invoked from the same logical node (process), call message handler directly
   // or invoked from the same worker thread, call message handler directly
+#if CMK_ERROR_CHECKING
+  if(trackMessages) CMI_UNIQ_MSG_ID(msg) = -13;
+#endif
   CmiHandleMessage(msg);
 #endif
 }
@@ -1655,6 +1665,13 @@ void updatePeerCounterAndPush(envelope *env) {
   if(peerAckInfo->decNumPeers() - 1 == 0) {
     QdCreate(1);
     CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
+
+    CmiPrintf("[%d][%d][%d] ==================== updatePeerCounter and push msg:%p to pe:%d ============\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, peerAckInfo->peerParentPe);
+
+#if CMK_ERROR_CHECKING
+    if(trackMessages) addToTracking((char *)env, peerAckInfo->peerParentPe);
+    //if(trackMessages) CMI_UNIQ_MSG_ID((char *)env) = -13;
+#endif
     CmiPushPE(CmiRankOf(peerAckInfo->peerParentPe), env);
   }
 }
@@ -1730,6 +1747,9 @@ void handleArrayMsgOnChildPostCompletionForRecvBcast(envelope *env) {
   {
     CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
     QdCreate(1);
+#if CMK_ERROR_CHECKING
+      if(trackMessages) CMI_UNIQ_MSG_ID((char *)env) = -13;
+#endif
     CmiHandleMessage(env);
   }
 }
@@ -1744,6 +1764,9 @@ void handleGroupMsgOnChildPostCompletionForRecvBcast(envelope *env) {
   {
     CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
     QdCreate(1);
+#if CMK_ERROR_CHECKING
+      if(trackMessages) CMI_UNIQ_MSG_ID((char *)env) = -13;
+#endif
     CmiHandleMessage(env);
   }
 }
@@ -1751,6 +1774,9 @@ void handleGroupMsgOnChildPostCompletionForRecvBcast(envelope *env) {
 void handleNGMsgOnChildPostCompletionForRecvBcast(envelope *env) {
   CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
   QdCreate(1);
+#if CMK_ERROR_CHECKING
+      if(trackMessages) CMI_UNIQ_MSG_ID((char *)env) = -13;
+#endif
   CmiHandleMessage(env);
 }
 
