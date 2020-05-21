@@ -580,7 +580,7 @@ static void SendToPeers(int size, char *msg) {
   if (CMI_MSG_NOKEEP(msg)) {
     for (int i = 0; i < exceptRank; i++) {
       CmiReference(msg);
-      CmiPrintf("[%d][%d][%d] ^^^^^^^^ SendToPeers CmiReference pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
+      //CmiPrintf("[%d][%d][%d] ^^^^^^^^ SendToPeers CmiReference pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
 #if CMK_ERROR_CHECKING
       if(trackMessages) addToTracking(msg, CmiMyNode()*CmiMyNodeSize() + i);
 #endif
@@ -589,7 +589,7 @@ static void SendToPeers(int size, char *msg) {
     }
     for (int i = exceptRank + 1; i < CmiMyNodeSize(); i++) {
       CmiReference(msg);
-      CmiPrintf("[%d][%d][%d] ^^^^^^^^ SendToPeers CmiReference pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
+      //CmiPrintf("[%d][%d][%d] ^^^^^^^^ SendToPeers CmiReference pushing msg:%p to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i);
 #if CMK_ERROR_CHECKING
       if(trackMessages) addToTracking(msg, CmiMyNode()*CmiMyNodeSize() + i);
 #endif
@@ -598,14 +598,14 @@ static void SendToPeers(int size, char *msg) {
     }
   } else {
     for (int i = 0; i < exceptRank; i++) {
-      CmiPrintf("[%d][%d][%d] ######## SendToPeers Regular 1 pushing msg:%p to index:%d, pe:%d (%d)\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i, CmiNodeFirst(CmiMyNode())+ i, CmiMyNode()*CmiMyNodeSize() + i);
+      //CmiPrintf("[%d][%d][%d] ######## SendToPeers Regular 1 pushing msg:%p to index:%d, pe:%d (%d)\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i, CmiNodeFirst(CmiMyNode())+ i, CmiMyNode()*CmiMyNodeSize() + i);
 #if CMK_ERROR_CHECKING
       if(trackMessages) addToTracking(msg, CmiMyNode()*CmiMyNodeSize() + i);
 #endif
       CmiPushPE(i, CopyMsg(msg, size));
     }
     for (int i = exceptRank + 1; i < CmiMyNodeSize(); i++) {
-      CmiPrintf("[%d][%d][%d] ######## SendToPeers Regular 2 pushing msg:%p to index:%d, pe:%d (%d)\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i, CmiNodeFirst(CmiMyNode())+ i, CmiMyNode()*CmiMyNodeSize() + i);
+      //CmiPrintf("[%d][%d][%d] ######## SendToPeers Regular 2 pushing msg:%p to index:%d, pe:%d (%d)\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg, i, CmiNodeFirst(CmiMyNode())+ i, CmiMyNode()*CmiMyNodeSize() + i);
 #if CMK_ERROR_CHECKING
       if(trackMessages) addToTracking(msg, CmiMyNode()*CmiMyNodeSize() + i);
 #endif

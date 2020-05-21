@@ -1666,12 +1666,20 @@ void updatePeerCounterAndPush(envelope *env) {
     QdCreate(1);
     CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
 
-    CmiPrintf("[%d][%d][%d] ==================== updatePeerCounter and push msg:%p to pe:%d ============\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, peerAckInfo->peerParentPe);
 
 #if CMK_ERROR_CHECKING
-    if(trackMessages) addToTracking((char *)env, peerAckInfo->peerParentPe);
+    if(trackMessages) {
+      // Reset message
+      CMI_UNIQ_MSG_ID(env) = -1;
+
+      //CmiPrintf("[%d][%d][%d] ==================== updatePeerCounter Before and push env:%p ,  uniqId:%d, pe:%d, node:%d ============\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, CMI_UNIQ_MSG_ID(env), CMI_SRC_PE(env), CMI_SRC_NODE(env));
+      addToTracking((char *)env, peerAckInfo->peerParentPe);
+    }
     //if(trackMessages) CMI_UNIQ_MSG_ID((char *)env) = -13;
 #endif
+
+    //CmiPrintf("[%d][%d][%d] ==================== updatePeerCounter After and push env:%p ,  uniqId:%d, pe:%d (peerParentPe:%d), node:%d ============\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, CMI_UNIQ_MSG_ID(env), CMI_SRC_PE(env), peerAckInfo->peerParentPe, CMI_SRC_NODE(env));
+
     CmiPushPE(CmiRankOf(peerAckInfo->peerParentPe), env);
   }
 }

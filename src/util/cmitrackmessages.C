@@ -211,7 +211,7 @@ inline void insertUniqIdEntry(char *msg, int destPe, bool nodeLevel) {
 
   DEBUG(CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, isNodeLevel:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, nodeLevel, msg);)
 
-  CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, isNodeLevel:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, nodeLevel, msg);
+  //CmiPrintf("[%d][%d][%d] ADDING uniqId:%d, pe:%d, type:%d, count:%zu, msgHandler:%d, ep:%d, destPe:%d, isNodeLevel:%d, msg:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), uniqId, CmiMyPe(), info.type, info.destPes.size(), info.msgHandler, info.ep, destPe, nodeLevel, msg);
 
 
   if(CmiMyPe() == 2 && uniqId == 11) {
@@ -322,6 +322,8 @@ void sendTrackingAck(char *msg) {
     if(CMI_MSG_NOKEEP(msg)) {
       // Same message reused, ensure that the count drops to 1
       if(CmiGetReference(msg) == 1) {
+
+        //CmiPrintf("[%d][%d][%d] ==================== CmiGetReference is 1, marking Acked for msg %p ============\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), msg);
         // To deal with messages that get enqueued twice
         markAcked(msg);
       }
