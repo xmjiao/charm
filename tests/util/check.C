@@ -47,6 +47,7 @@ void check_test(int argc, char** argv) {
 
   if (argc > 1) {
     const int expected_pes = atoi(argv[1]);
+    CmiPrintf("[%d][%d][%d] numPes=%d, expected_pes=%d, argc=%d, argv[0]=%s, argv[1]=%s\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CmiNumPes(), expected_pes, argc, argv[0], argv[1]);
     if (CmiNumPes() != expected_pes) {
       CmiAbort("PE count %d doesn't match expectation %d", CmiNumPes(), expected_pes);
     }

@@ -1224,7 +1224,7 @@ static void arg_init(int argc, const char **argv)
   }
   else if (arg_requested_pes <= 0 && arg_requested_nodes <= 0 && arg_ppn <= 0 && !proc_active && !onewth_active)
   {
-    PRINT(("Charmrun> No provisioning arguments specified. Running with a single PE.\n"
+    PRINT(("Charmrun> No -provisioning arguments specified. Running with a single PE.\n"
            "          Use ++auto-provision to fully subscribe resources or +p1 to silence this message.\n"));
   }
 }

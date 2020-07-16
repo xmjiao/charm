@@ -1325,7 +1325,7 @@ void ConverseInit(int argc, char **argv, CmiStartFn fn, int usched, int initret)
     {
       if (!quietMode)
       {
-        printf("Charm++> No provisioning arguments specified. Running with a single PE.\n"
+        printf("Charm++> No Provisioning arguments specified. Running with a single PE.\n"
                "         Use +auto-provision to fully subscribe resources or +p1 to silence this message.\n");
       }
     }

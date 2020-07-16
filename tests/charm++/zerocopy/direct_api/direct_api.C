@@ -20,6 +20,8 @@ class Main : public CBase_Main {
       if(numElements % 2 != 0) {
         CkAbort("<array size> argument is not even\n");
       }
+
+      CmiPrintf("[%d][%d][%d] argc=%d, argv[0]=%s, argv[1]=%s\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), m->argc, m->argv[0], m->argv[1]);
       delete m;
 
       mProxy = thisProxy;
