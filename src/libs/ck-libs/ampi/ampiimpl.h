@@ -2601,6 +2601,7 @@ class ampi final : public CBase_ampi {
   bool inorder(AmpiMsg *msg) noexcept;
   void inorderBcast(AmpiMsg *msg, bool deleteMsg) noexcept;
   void inorderRdma(char* buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank) noexcept;
+  void inorderBcastRdma(char *buf, int size, CMK_REFNUM_TYPE, int tag, int srcRank) noexcept;
   inline void localInorder(char* buf, int size, int seqIdx, CMK_REFNUM_TYPE seq, int tag,
                            int srcRank, IReq* ireq) noexcept;
 
@@ -2629,9 +2630,11 @@ class ampi final : public CBase_ampi {
   void generic(AmpiMsg *) noexcept;
   void genericRdma(char* buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank) noexcept;
   void completedRdmaSend(CkDataMsg *msg) noexcept;
+  void completedRdmaBcastSend(CkDataMsg *msg) noexcept;
   void completedRdmaRecv(CkDataMsg *msg) noexcept;
   void requestPut(MPI_Request req, CkNcpyBuffer targetInfo) noexcept;
   void bcastResult(AmpiMsg *msg) noexcept;
+  void bcastResultRdma(char* buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank) noexcept;
   void barrierResult(void) noexcept;
   void ibarrierResult(void) noexcept;
   void rednResult(CkReductionMsg *msg) noexcept;
@@ -2710,6 +2713,8 @@ class ampi final : public CBase_ampi {
   inline MPI_Request sendRdmaMsg(int t, int sRank, const void* buf, int size, MPI_Datatype type, int destIdx,
                                  int destRank, MPI_Comm destcomm, CMK_REFNUM_TYPE seq, CProxy_ampi arrProxy,
                                  MPI_Request reqIdx) noexcept;
+
+  inline MPI_Request sendRdmaBcastMsg(const void* buf, int size, MPI_Datatype type, MPI_Comm destcomm, int root, MPI_Request reqIdx) noexcept;
   inline bool destLikelyWithinProcess(CProxy_ampi arrProxy, int destIdx, ampi* destPtr) const noexcept {
 #if CMK_MULTICORE
     return true;
