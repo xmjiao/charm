@@ -1670,6 +1670,19 @@ class AmpiRequestList {
     return idx;
   }
 
+  inline size_t size() noexcept {
+    return reqs.size();
+  }
+
+  inline size_t validSize() noexcept {
+    size_t count=0;
+    for (int i=0; i<reqs.size(); i++) {
+      if (reqs[i] == NULL) continue;
+      else count++;
+    }
+    return count;
+  }
+
   inline void checkRequest(MPI_Request idx) const noexcept {
     if (idx != MPI_REQUEST_NULL && (idx < 0 || idx >= reqs.size()))
       CkAbort("Invalid MPI_Request\n");
@@ -2505,6 +2518,8 @@ class ampiParent final : public CBase_ampiParent {
     MPI_User_function *func = op2User_function(op);
     (func)((void*)invec, inoutvec, &count, &datatype);
   }
+
+  CMI_WARN_UNUSED_RESULT ampiParent* waitWithoutFree(MPI_Request* req, MPI_Status *sts) noexcept;
 
   CMI_WARN_UNUSED_RESULT ampiParent* wait(MPI_Request* req, MPI_Status* sts) noexcept;
   CMI_WARN_UNUSED_RESULT ampiParent* waitall(int count, MPI_Request request[], MPI_Status sts[]=MPI_STATUSES_IGNORE) noexcept;

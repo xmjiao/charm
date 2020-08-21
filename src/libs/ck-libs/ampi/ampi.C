@@ -2679,6 +2679,7 @@ inline static AmpiRequestList &getReqs() noexcept;
 
 void AmpiRequestList::freeNonPersReq(ampiParent* pptr, int &idx) noexcept {
   if (!reqs[idx]->isPersistent()) {
+    CkPrintf("AmpiRequestList::freeNonPersReq %d [%p]\n", idx, reqs[idx]);
     free(idx, pptr->getDDT());
     idx = MPI_REQUEST_NULL;
   }
@@ -2808,8 +2809,9 @@ void ampi::completedRdmaBcastSend(CkDataMsg *msg) noexcept
 
   reqIdx = CkGetRefNum(msg);
 
-  CmiPrintf("[%d][%d][%d][%d] ampi::completedRdmaBcastSend reqIdx %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, reqIdx);
   AmpiRequestList& reqList = getReqs();
+  CmiPrintf("[%d][%d][%d][%d] ampi::completedRdmaBcastSend reqIdx %d and reqList size=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, reqIdx, reqList.validSize());
+  reqList.print();
   AmpiRequest& sreq = (*reqList[reqIdx]);
   sreq.complete = true;
 
@@ -2825,6 +2827,7 @@ MPI_Request ampi::sendRdmaBcastMsg(const void* buf, int size, MPI_Datatype type,
     reqIdx = postReq(parent->reqPool.newReq<SendReq>(type, destcomm, getDDT()));
   }
   CkCallback completedSendCB(CkIndex_ampi::completedRdmaBcastSend(NULL), thisProxy[thisIndex], true/*inline*/);
+  //CkCallback completedSendCB(CkIndex_ampi::completedRdmaBcastSend(NULL), thisProxy[thisIndex]);
   completedSendCB.setRefnum(reqIdx);
 
   CMK_REFNUM_TYPE seq = getSeqNo(root, destcomm, MPI_BCAST_TAG);
@@ -3794,6 +3797,8 @@ void ampi::bcast(int root, void* buf, int count, MPI_Datatype type, MPI_Comm des
     int size = ddt->getSize(count);
     if(ddt->isContig()) {
       sendRdmaBcastMsg(buf, size, type, destcomm, root, req);
+      getAmpiParent()->waitWithoutFree(&req, MPI_STATUS_IGNORE);
+      return;
     }
     else
 #endif
@@ -6029,6 +6034,50 @@ AMPI_API_IMPL(int, MPI_Wait, MPI_Request *request, MPI_Status *sts)
   return MPI_SUCCESS;
 }
 
+CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::waitWithoutFree(MPI_Request *request, MPI_Status *sts) noexcept
+{
+  if(*request == MPI_REQUEST_NULL){
+    clearStatus(sts);
+    return MPI_SUCCESS;
+  }
+  checkRequest(*request);
+  ampiParent* pptr = this;
+  AmpiRequestList& reqs = getReqs();
+
+#if AMPIMSGLOG
+  if(msgLogRead){
+    (*fromPUPer)|pupBytes;
+    PUParray(*fromPUPer, (char *)reqs[*request]->buf, pupBytes);
+    PUParray(*fromPUPer, (char *)sts, sizeof(MPI_Status));
+    return MPI_SUCCESS;
+  }
+#endif
+
+  AMPI_DEBUG("AMPI_Wait request=%d reqs[*request]=%p reqs[*request]->tag=%d &reqs=%p\n",
+             *request, reqs[*request], (int)(reqs[*request]->tag), &reqs);
+  CkAssert(pptr->numBlockedReqs == 0);
+
+  int waitResult = -1;
+    AmpiRequest& waitReq = *reqs[*request];
+    CmiPrintf("[%d][%d][%d][%d] ampiParent::wait reqIdx %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, *request);
+    pptr = waitReq.wait(pptr, sts, &waitResult);
+  reqs = pptr->getReqs();
+
+  CkAssert(pptr->numBlockedReqs == 0);
+  AMPI_DEBUG("AMPI_Wait after calling wait, request=%d reqs[*request]=%p reqs[*request]->tag=%d\n",
+             *request, reqs[*request], (int)(reqs[*request]->tag));
+
+#if AMPIMSGLOG
+  if(msgLogWrite && record_msglog(pptr->thisIndex)){
+    (pptr->pupBytes) = getDDT()->getSize(reqs[*request]->type) * (reqs[*request]->count);
+    (*(pptr->toPUPer))|(pptr->pupBytes);
+    PUParray(*(pptr->toPUPer), (char *)(reqs[*request]->buf), (pptr->pupBytes));
+    PUParray(*(pptr->toPUPer), (char *)sts, sizeof(MPI_Status));
+  }
+#endif
+  return MPI_SUCCESS;
+}
+
 CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::wait(MPI_Request *request, MPI_Status *sts) noexcept
 {
   if(*request == MPI_REQUEST_NULL){
@@ -6055,6 +6104,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::wait(MPI_Request *request, MPI_St
 
   int waitResult = -1;
     AmpiRequest& waitReq = *reqs[*request];
+    CmiPrintf("[%d][%d][%d][%d] ampiParent::wait reqIdx %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, *request);
     pptr = waitReq.wait(pptr, sts, &waitResult);
   reqs = pptr->getReqs();
 
@@ -6071,7 +6121,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::wait(MPI_Request *request, MPI_St
   }
 #endif
 
-
+  CmiPrintf("[%d][%d][%d][%d] ampiParent::wait &&&&7 calling freeNonPersReq with reqIdx:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, *request);
   reqs.freeNonPersReq(pptr, *request);
 
   return MPI_SUCCESS;

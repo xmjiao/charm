@@ -13,7 +13,8 @@ int main( int argc, char **argv)
   int i, rank, reps, n;
   int bVerify = 1;
   //int sizes[NUM_SIZES] = { 100, 64*1024, 128*1024 };
-  int sizes[NUM_SIZES] = { 10, 15 };
+  //int sizes[NUM_SIZES] = { 10, 15 };
+  int sizes[NUM_SIZES] = { 200, 190};
   //int sizes[NUM_SIZES] = { 100 };
   int num_errors=0, tot_errors;
 
@@ -52,21 +53,21 @@ int main( int argc, char **argv)
           }
         }
       }
-      if(rank == ROOT) {
-        printf("[rank=%d] broadcasting on ROOT %d\n", rank, n);
-        for (i=0; i<sizes[n]; i++)
-        {
-          printf("[rank=%d] %d=[%d]\n", rank, i, buf[i]);
-        }
-      }
+      //if(rank == ROOT) {
+      //  printf("[rank=%d] broadcasting on ROOT %d\n", rank, n);
+      //  for (i=0; i<sizes[n]; i++)
+      //  {
+      //    printf("[rank=%d] %d=[%d]\n", rank, i, buf[i]);
+      //  }
+      //}
       MPI_Bcast(buf, sizes[n], MPI_INT, ROOT, MPI_COMM_WORLD);
-      if(rank != ROOT) {
-        printf("[rank=%d] broadcasting on non-root %d\n", rank, n);
-        for (i=0; i<sizes[n]; i++)
-        {
-          printf("[rank=%d] %d=[%d]\n", rank, i, buf[i]);
-        }
-      }
+      //if(rank != ROOT) {
+      //  printf("[rank=%d] broadcasting on non-root %d\n", rank, n);
+      //  for (i=0; i<sizes[n]; i++)
+      //  {
+      //    printf("[rank=%d] %d=[%d]\n", rank, i, buf[i]);
+      //  }
+      //}
       if (bVerify)
       {
         num_errors = 0;
