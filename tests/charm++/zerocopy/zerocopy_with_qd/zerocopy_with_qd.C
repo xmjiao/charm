@@ -257,9 +257,16 @@ class testArr : public CBase_testArr {
 
     void recvEmPostApiBuffer(char *&buff1, int &size1, char *&buff2, int &size2, char *&buff3, int &size3, CkNcpyBufferPost *ncpyPost) {
       // use member variable buffers (buff1, buff2, buff3) as recipient buffers
-      buff1 = this->buff1;
-      buff2 = this->buff2;
-      buff3 = this->buff3;
+      //buff1 = this->buff1;
+      //buff2 = this->buff2;
+      //buff3 = this->buff3;
+
+      CkPostBuffer(this->buff1, (size_t) size1, 3*thisIndex);
+      CkMatchBuffer(ncpyPost, 0, 3*thisIndex);
+      CkPostBuffer(this->buff2, (size_t) size2, 3*thisIndex + 1);
+      CkMatchBuffer(ncpyPost, 1, 3*thisIndex + 1);
+      CkPostBuffer(this->buff3, (size_t) size3, 3*thisIndex + 2);
+      CkMatchBuffer(ncpyPost, 2, 3*thisIndex + 2);
     }
 
     void recvEmPostApiBuffer(char *buff1, int size1, char *buff2, int size2, char *buff3, int size3) {
