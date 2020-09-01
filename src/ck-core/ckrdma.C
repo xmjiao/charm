@@ -19,9 +19,24 @@ void CmiFreeBroadcastAllExceptMeFn(int size, char *msg);
 
 // Integer used to store the ncpy ack handler idx
 static int ncpy_handler_idx, ncpy_bcastNo_handler_idx, zcpy_pup_complete_handler_idx;
+CkpvDeclare(int, postTag);
+CkpvExtern(ReqTagPostMap, ncpyPostedReqMap);
+CkpvExtern(ReqTagBufferMap, ncpyPostedBufferMap);
 CpvExtern(std::vector<NcpyOperationInfo *>, newZCPupGets);
 CksvExtern(ObjNumRdmaOpsMap, pendingZCOps);
 CksvExtern(CmiNodeLock, _nodeZCPendingLock);
+
+//#if CMK_SMP
+CksvExtern(ReqTagPostMap, ncpyPostedReqNodeMap);
+CksvExtern(ReqTagBufferMap, ncpyPostedBufferNodeMap);
+CksvExtern(CmiNodeLock, _nodeZCPostReqLock);
+CksvExtern(CmiNodeLock, _nodeZCBufferReqLock);
+//#endif
+
+void CkOnesidedInit() {
+  CkpvInitialize(int, postTag);
+  CkpvAccess(postTag) = 1;
+}
 
 /*********************************** Zerocopy Direct API **********************************/
 
@@ -379,13 +394,18 @@ inline void zcQdIncrement() {
 
 /************************* Zerocopy Entry Method API - Utility functions ******************/
 
+void performRget(char *ref, int index, int extraSize) {
+  // Launch rget
+  NcpyEmBufferInfo *ncpyEmBufferInfo = (NcpyEmBufferInfo *)(ref + sizeof(NcpyEmInfo) + index *(sizeof(NcpyEmBufferInfo) + extraSize));
+  NcpyOperationInfo *ncpyOpInfo = &(ncpyEmBufferInfo->ncpyOpInfo);
+  zcQdIncrement();
+  CmiIssueRget(ncpyOpInfo);
+}
+
 void performRgets(char *ref, int numops, int extraSize) {
   // Launch rgets
   for(int i=0; i<numops; i++){
-    NcpyEmBufferInfo *ncpyEmBufferInfo = (NcpyEmBufferInfo *)(ref + sizeof(NcpyEmInfo) + i *(sizeof(NcpyEmBufferInfo) + extraSize));
-    NcpyOperationInfo *ncpyOpInfo = &(ncpyEmBufferInfo->ncpyOpInfo);
-    zcQdIncrement();
-    CmiIssueRget(ncpyOpInfo);
+    performRget(ref, i, extraSize);
   }
 }
 
@@ -463,6 +483,7 @@ void CkRdmaEMAckHandler(int destPe, void *ack) {
       case ncpyEmApiMode::P2P_RECV    : // Since P2P_RECV messages are enqueued twice (first with Post EM
                                         // and the next time with Regular EM), hence QdCounter should be added
                                         QdCreate(1);
+                                        CMI_ZC_MSGTYPE(ncpyEmInfo->msg) = CMK_REG_NO_ZC_MSG;
                                         enqueueNcpyMessage(destPe, ncpyEmInfo->msg);
                                         CmiFree(ncpyEmInfo);
                                         break;
@@ -586,7 +607,7 @@ void performEmApiRget(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, cha
                                                  // It'll be freed when the message is freed by the RTS after the execution of the entry method
   ncpyOpInfo->refPtr = ncpyEmBufferInfo;
 
-  // Do no launch Rgets here as they could potentially cause a race condition in the SMP mode
+  // Do not launch Rgets here as they could potentially cause a race condition in the SMP mode
   // The race condition is caused when an RGET completes and invokes the CkRdmaDirectAckHandler
   // on the comm. thread as the message is being inside this for loop on the worker thread
 }
@@ -897,7 +918,7 @@ envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg
  * the destination to perform zerocopy operations as a part of the Zerocopy Entry Method
  * API
  */
-void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, CkNcpyBufferPost *postStructs){
+void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, int arrayIndex, CkNcpyBufferPost *postStructs){
 
   int refSize = 0;
   char *ref;
@@ -913,6 +934,80 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootN
 
   layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
 
+  std::vector< std::vector<int>> *tagArray;
+  NcpyBcastRecvPeerAckInfo *peerAckInfo = NULL;
+  //int *tagArray = NULL;
+  //
+  if(emMode == ncpyEmApiMode::BCAST_RECV) {
+
+  if(env->getMsgtype() == ArrayBcastFwdMsg) {
+
+
+    CkArray *mgr = getArrayMgrFromMsg(env);
+    int numElems = mgr->getNumLocalElems();
+
+    //CmiPrintf("[%d][%d][%d][%d] CkRdmaIssueRgets Array Bcast Msg env=%p numops=%d num array elems = %d, tagArray =%p, peerAckInfo=%p and setting it to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), arrayIndex, env, numops, numElems, tagArray, peerAckInfo, numElems - 1);
+    //if(numElems > 1) {
+      //tagArray = new int[CmiMyNodeSize() * numElems * numops];
+      tagArray = new std::vector< std::vector<int> >;
+      //int[CmiMyNodeSize() * numElems * numops];
+
+      //memset(tagArray, -1, CmiMyNodeSize() * numElems * numops * sizeof(int));
+      tagArray->resize(CmiMyNodeSize());
+
+      int localIndex = mgr->getEltLocalIndex(arrayIndex);
+      (*tagArray)[CmiMyRank()].resize(numElems * numops);
+
+      std::fill((*tagArray)[CmiMyRank()].begin(), (*tagArray)[CmiMyRank()].end(), 0);
+
+      for(int i=0; i < numops; i++)
+        (*(tagArray))[CmiMyRank()][localIndex * numops + i] = -1; // Is already posted
+
+      peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      //peerAckInfo->setNumPeers(CmiMyNodeSize() * numElems - 1);
+      peerAckInfo->setNumElems(numElems - 1);
+      peerAckInfo->setNumPeers(CmiMyNodeSize() - 1);
+      peerAckInfo->msg = (void *)env;
+      peerAckInfo->peerParentPe = CmiMyPe();
+    //}
+    //CmiPrintf("[%d][%d][%d] CkRdmaIssueRgets Array Bcast Msg env=%p numops=%d num array elems = %d, tagArray =%p, peerAckInfo=%p and setting it to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, numops, numElems, tagArray, peerAckInfo, numElems - 1);
+  }
+
+#if CMK_SMP
+  else if(env->getMsgtype() == ForBocMsg) {
+    int localIndex = CmiMyRank();
+
+    //CkArray *mgr = getArrayMgrFromMsg(env);
+    int numElems = CmiMyNodeSize();
+
+    //if(numElems > 1) {
+      //tagArray = new int[CmiMyNodeSize() * numElems * numops];
+      tagArray = new std::vector< std::vector<int> >;
+      //int[CmiMyNodeSize() * numElems * numops];
+
+      //memset(tagArray, -1, CmiMyNodeSize() * numElems * numops * sizeof(int));
+      tagArray->resize(CmiMyNodeSize());
+
+      for(int i=0; i < CmiMyNodeSize(); i++) {
+        (*tagArray)[i].resize(numops);
+        std::fill((*tagArray)[i].begin(), (*tagArray)[i].end(), -1);
+      }
+
+      for(int i=0; i < numops; i++)
+        (*tagArray)[CmiMyRank()][i] = 0; // Is already posted
+
+      peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      //peerAckInfo->setNumPeers(CmiMyNodeSize() * numElems - 1);
+      peerAckInfo->setNumElems(numElems - 1);
+      peerAckInfo->setNumPeers(0);
+      peerAckInfo->msg = (void *)env;
+      peerAckInfo->peerParentPe = CmiMyPe();
+    //}
+      //CmiPrintf("[%d][%d][%d] CkRdmaIssueRgets Group Bcast Msg env=%p numops=%d num array elems = %d, tagArray =%p, peerAckInfo=%p and setting it to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, numops, numElems, tagArray, peerAckInfo, numElems - 1);
+  }
+#endif
+  }
+
   if(ncpyMode == CkNcpyMode::RDMA) {
     preprocessRdmaCaseForRgets(layerInfoSize, ncpyObjSize, extraSize, refSize, numops);
     ref = (char *)CmiAlloc(refSize);
@@ -926,6 +1021,9 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootN
   if(ncpyMode == CkNcpyMode::RDMA) {
     setNcpyEmInfo(ref, env, numops, NULL, emMode);
   }
+
+  //((NcpyEmInfo *)ref)->tagArray = tagArray;
+  //((NcpyEmInfo *)ref)->peerAckInfo = peerAckInfo;
 
   PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
@@ -963,6 +1061,11 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootN
     source.regMode = dest.regMode;
 
     source.deregMode = dest.deregMode;
+
+    //source.tagArray = tagArray;
+    source.tagArray = postStructs[i].ncpyEmInfo->tagArray;
+
+    source.peerAckInfo = peerAckInfo;
 
     memcpy(source.layerInfo, dest.layerInfo, layerInfoSize);
 
@@ -1245,33 +1348,24 @@ void CkRdmaEMBcastAckHandler(void *ack) {
 #if CMK_REG_REQUIRED
         deregisterMemFromMsg(myMsg, true);
 #endif
+
+
+        //handleMsgOnChildPostCompletionForRecvBcast(env);
+
         CkArray *mgr = NULL;
         CMI_ZC_MSGTYPE(myMsg) = CMK_ZC_BCAST_RECV_DONE_MSG;
 
         CkUnpackMessage(&myMsg); // DO NOT REMOVE THIS
 
-        if(bcastInterimAckInfo->isArray) {
-          mgr = getArrayMgrFromMsg(myMsg);
-          mgr->forwardZCMsgToOtherElems(myMsg);
-        }
-#if CMK_SMP
-        if(CmiMyNodeSize() > 1 && myMsg->getMsgtype() != ForNodeBocMsg) {
-          sendRecvDoneMsgToPeers(myMsg, mgr);
-        } else {
-          // Set zcMsgType to CMK_ZC_BCAST_RECV_ALL_DONE_MSG to signal to charmxi
-          // that this is the final message containing the posted pointers
-          CMI_ZC_MSGTYPE(myMsg) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
-          QdCreate(1);
-          enqueueNcpyMessage(bcastAckInfo->pe, myMsg);
-        }
-#else
-        // Set zcMsgType to CMK_ZC_BCAST_RECV_ALL_DONE_MSG to signal to charmxi
-        // that this is the final message containing the posted pointers
-        CMI_ZC_MSGTYPE(myMsg) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
+        //CmiPrintf("[%d][%d][%d] isRecv interim node msgType:%d, arrayBcastMsgType:%d, ForBocMsg:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), myMsg->getMsgtype(), ArrayBcastFwdMsg, ForBocMsg);
 
-        QdCreate(1);
-        enqueueNcpyMessage(bcastAckInfo->pe, myMsg);
-#endif
+        if(bcastInterimAckInfo->isArray) {
+          handleArrayMsgOnChildPostCompletionForRecvBcast(myMsg);
+        } else if(myMsg->getMsgtype() == ForBocMsg) {
+          handleGroupMsgOnChildPostCompletionForRecvBcast(myMsg);
+        } else if(myMsg->getMsgtype() == ForNodeBocMsg) {
+          handleNGMsgOnChildPostCompletionForRecvBcast(myMsg);
+        }
       } else { // bcast send api
 
         // deregister using the message
@@ -1600,68 +1694,9 @@ void CkReplaceSourcePtrsInBcastMsg(envelope *env, NcpyBcastInterimAckInfo *bcast
 #endif
 }
 
-#if CMK_SMP
-void updatePeerCounterAndPush(envelope *env) {
-  int pe;
-  int numops, rootNode;
 
-  PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
-  PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
-
-  up|numops;
-  up|rootNode;
-  p|numops;
-  p|rootNode;
-
-  CkNcpyBuffer source;
-
-  up|source;
-
-  pe = CmiNodeFirst(CmiMyNode());
-
-  void *ref = (void *)source.refAckInfo;
-  NcpyBcastRecvPeerAckInfo *peerAckInfo = (NcpyBcastRecvPeerAckInfo *)ref;
-
-  p|source;
-  CmiSpanningTreeInfo &t = *(getSpanningTreeInfo(rootNode));
-  if(peerAckInfo->decNumPeers() - 1 == 0) {
-    QdCreate(1);
-    CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
-    CmiPushPE(CmiRankOf(peerAckInfo->peerParentPe), env);
-  }
-}
-
+#if CMK_SMP || CMK_UTH_VERSION
 void sendRecvDoneMsgToPeers(envelope *env, CkArray *mgr) {
-
-  CmiSpanningTreeInfo &t = *(getSpanningTreeInfo(getRootNode(env)));
-
-  // Allocate a struct for handling peer acks
-  NcpyBcastRecvPeerAckInfo *peerAckInfo = new NcpyBcastRecvPeerAckInfo();
-
-  // Find how many peers I have
-  peerAckInfo->setNumPeers(CmiMyNodeSize() - 1);
-  peerAckInfo->msg = (void *)env;
-  peerAckInfo->peerParentPe = CmiMyPe();
-
-  int numops, rootNode;
-
-  // Replace bcastAckInfo with peerAckInfo
-  PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
-  PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
-
-  up|numops;
-  up|rootNode;
-  p|numops;
-  p|rootNode;
-
-  CkNcpyBuffer source;
-
-  up|source;
-
-  peerAckInfo->bcastAckInfo = (void *)source.refAckInfo;
-  source.refAckInfo = peerAckInfo;
-
-  p|source;
 
   CmiForwardMsgToPeers(env->getTotalsize(), (char *)env);
 }
@@ -1694,6 +1729,23 @@ void handleArrayMsgOnChildPostCompletionForRecvBcast(envelope *env) {
   CkArray *mgr = getArrayMgrFromMsg(env);
   mgr->forwardZCMsgToOtherElems(env);
 
+#if CMK_SMP
+  if(CmiMyNodeSize() > 1) {
+    sendRecvDoneMsgToPeers(env, mgr);
+  } else
+#endif
+  {
+    if(mgr->getNumLocalElems() == 1) { // this is the only element
+      CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
+      QdCreate(1);
+      CmiHandleMessage(env);
+    }
+  }
+  //TODO: Equeue the basic message if there are no elements
+}
+
+void markArrayMsgAsAllDone(envelope *env) {
+  CkArray *mgr = getArrayMgrFromMsg(env);
 #if CMK_SMP
   if(CmiMyNodeSize() > 1) {
     sendRecvDoneMsgToPeers(env, mgr);
@@ -2089,3 +2141,604 @@ void zcPupIssueRgets(CmiUInt8 id, CkLocMgr *locMgr) {
   locMgr->bufferedActiveRgetMsgs.emplace(id, std::vector<CkArrayMessage *>()); // does not require locking as it is owned by locMgr
 }
 /***************************** End of Zerocopy PUP Support ****************************/
+
+
+void updateTagArray(envelope *env, int localElems) {
+  int numops = 0;
+  int bufsize = 0;
+  int rootNode;
+  PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
+  up|numops;
+  up|rootNode;
+  for(int i=0; i<numops; i++){
+    CkNcpyBuffer w;
+    up|w;
+    (*(w.tagArray))[CmiMyRank()].resize(localElems * numops);
+    std::fill((*w.tagArray)[CmiMyRank()].begin(), (*w.tagArray)[CmiMyRank()].end(), -1);
+
+    //w.peerAckInfo->setNumElems(w.peerAckInfo->getNumElems() + localElems);
+    w.peerAckInfo->incNumElems(localElems);
+    w.peerAckInfo->decNumPeers();
+
+    CmiPrintf("[%d][%d][%d] updateTagArray and numPeers is %d, localElems is %d and numElems is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), w.peerAckInfo->getNumPeers(), localElems, w.peerAckInfo->getNumElems());
+    break;
+  }
+}
+
+void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, CkNcpyBufferPost *post) {
+
+  //CmiPrintf("[%d][%d][%d] CkRdmaPostLaterPreprocess env=%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env);
+  int refSize = 0;
+  char *ref = NULL;
+  int layerInfoSize, ncpyObjSize, extraSize;
+
+  CkNcpyMode ncpyMode = findTransferMode(getSrcPe(env), CkMyPe());
+
+  layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
+
+  std::vector< std::vector<int>> *tagArray;
+  //int *tagArray = NULL;
+  NcpyBcastRecvPeerAckInfo *peerAckInfo = NULL;
+
+
+  if(emMode == ncpyEmApiMode::BCAST_RECV) {
+  if(env->getMsgtype() == ArrayBcastFwdMsg) {
+    CkArray *mgr = getArrayMgrFromMsg(env);
+    int numElems = mgr->getNumLocalElems();
+
+    //if(numElems > 1) {
+      //tagArray = new int[CmiMyNodeSize() * numElems * numops];
+      tagArray = new std::vector< std::vector<int> >;
+      //int[CmiMyNodeSize() * numElems * numops];
+
+      //memset(tagArray, -1, CmiMyNodeSize() * numElems * numops * sizeof(int));
+      tagArray->resize(CmiMyNodeSize());
+
+      (*tagArray)[CmiMyRank()].resize(numElems * numops);
+
+      std::fill((*tagArray)[CmiMyRank()].begin(), (*tagArray)[CmiMyRank()].end(), -1);
+
+      peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      //peerAckInfo->setNumPeers(CmiMyNodeSize() * numElems - 1);
+      peerAckInfo->setNumElems(numElems - 1);
+      peerAckInfo->setNumPeers(CmiMyNodeSize() - 1);
+      peerAckInfo->msg = (void *)env;
+      peerAckInfo->peerParentPe = CmiMyPe();
+    //}
+    CmiPrintf("[%d][%d][%d] CkRdmaPostLaterPreprocess Array Bcast Msg env=%p numops=%d num array elems = %d, tagArray =%p, peerAckInfo=%p and setting localElems to %d and numPeers to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, numops, numElems, tagArray, peerAckInfo, peerAckInfo->getNumElems(), peerAckInfo->getNumPeers());
+  }
+
+#if CMK_SMP
+  else if(env->getMsgtype() == ForBocMsg) {
+
+    //CkArray *mgr = getArrayMgrFromMsg(env);
+    int numElems = CmiMyNodeSize();
+
+    //if(numElems > 1) {
+      //tagArray = new int[CmiMyNodeSize() * numElems * numops];
+      tagArray = new std::vector< std::vector<int> >;
+      //int[CmiMyNodeSize() * numElems * numops];
+
+      //memset(tagArray, -1, CmiMyNodeSize() * numElems * numops * sizeof(int));
+      tagArray->resize(CmiMyNodeSize());
+
+      for(int i=0; i < CmiMyNodeSize(); i++) {
+        (*tagArray)[i].resize(numops);
+        std::fill((*tagArray)[i].begin(), (*tagArray)[i].end(), -1);
+      }
+
+      peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      //peerAckInfo->setNumPeers(CmiMyNodeSize() * numElems - 1);
+      peerAckInfo->setNumElems(numElems - 1);
+      peerAckInfo->setNumPeers(0);
+      peerAckInfo->msg = (void *)env;
+      peerAckInfo->peerParentPe = CmiMyPe();
+    //}
+      //CmiPrintf("[%d][%d][%d] CkRdmaPostLaterPreprocess Group Bcast Msg env=%p numops=%d num array elems = %d, tagArray =%p, peerAckInfo=%p and setting it to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, numops, numElems, tagArray, peerAckInfo, numElems - 1);
+  }
+#endif
+  }
+
+  if(ncpyMode == CkNcpyMode::RDMA) {
+    preprocessRdmaCaseForRgets(layerInfoSize, ncpyObjSize, extraSize, refSize, numops);
+    ref = (char *)CmiAlloc(refSize);
+    setNcpyEmInfo(ref, env, numops, NULL, emMode);
+
+  } else {
+    ref = (char *)CmiAlloc(sizeof(NcpyEmInfo));
+    setNcpyEmInfo(ref, env, numops, NULL, emMode);
+  }
+
+  ((NcpyEmInfo *)ref)->tagArray = tagArray;
+  ((NcpyEmInfo *)ref)->peerAckInfo = peerAckInfo;
+
+  for(int i=0; i<numops; i++) {
+    post[i].ncpyEmInfo = (NcpyEmInfo *)ref;
+    //CmiPrintf("[%d][%d][%d] CkPostBufferLater i=%d posting tag=%d and setting ncpyEmInfo to %p and extraSize is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), i, post[i].tag, post[i].ncpyEmInfo, extraSize);
+
+    //if(env->getMsgtype() == ForNodeBocMsg) {
+    //  CmiLock(CksvAccess(_nodeZCPostReqLock));
+    //  CksvAccess(ncpyPostedReqNodeMap).emplace(post[i].tag, post[i]);
+    //  CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+    //} else {
+    //  CkpvAccess(ncpyPostedReqMap).emplace(post[i].tag, post[i]);
+    //}
+  }
+}
+
+int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize) {
+  envelope *env = (envelope *)post.ncpyEmInfo->msg;
+  int numops = post.ncpyEmInfo->numOps;
+  ncpyEmApiMode emMode = post.ncpyEmInfo->mode;
+
+  if(CMI_IS_ZC_RECV(env)) {
+    int destIndex = post.index;
+
+    CmiPrintf("[%d][%d][%d] CkPerformRget destIndex=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), destIndex);
+
+    int refSize = 0;
+    char *ref;
+    int layerInfoSize, ncpyObjSize, extraSize;
+    int rootNode;
+
+    layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
+
+    CkNcpyMode ncpyMode = findTransferMode(getSrcPe(env), CkMyPe());
+
+    if(ncpyMode == CkNcpyMode::RDMA) {
+      preprocessRdmaCaseForRgets(layerInfoSize, ncpyObjSize, extraSize, refSize, numops);
+    }
+
+
+    CmiSpanningTreeInfo *t = NULL;
+
+    ref = (char *)post.ncpyEmInfo;
+
+    PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
+    PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
+    up|numops;
+    up|rootNode;
+    p|numops;
+    p|rootNode;
+
+    if(emMode == ncpyEmApiMode::BCAST_RECV) {
+      if(_topoTree == NULL) CkAbort("CkPostBufferInternal: topo tree has not been calculated \n");
+      t = getSpanningTreeInfo(rootNode);
+    }
+
+    //CkAssert(numops == 1);
+
+    // source buffer
+    CkNcpyBuffer source;
+
+    bool sendBackToSourceForDereg = false;
+    for(int i=0; i<numops; i++){
+      up|source;
+
+      if(i == destIndex) {
+
+        if(source.cnt < destSize)
+          CkAbort("CkRdmaIssueRgets: Size of the posted buffer > Size of the source buffer\n");
+
+#if CMK_USE_CMA && CMK_REG_REQUIRED
+        if(!sendBackToSourceForDereg && ncpyMode == CkNcpyMode::CMA && source.refAckInfo != NULL)
+          sendBackToSourceForDereg = true;
+#endif
+
+        // destination buffer
+        CkNcpyBuffer dest((const void *)destBuffer, destSize, post.regMode, post.deregMode);
+
+        performEmApiNcpyTransfer(source, dest, i, t, ref, extraSize, ncpyMode, rootNode, emMode);
+
+        //Update the CkRdmaWrapper pointer of the new message
+        source.ptr = destBuffer;
+
+        source.isRegistered = dest.isRegistered;
+
+        source.regMode = dest.regMode;
+
+        source.deregMode = dest.deregMode;
+
+        source.tagArray = post.ncpyEmInfo->tagArray;
+
+        source.peerAckInfo = post.ncpyEmInfo->peerAckInfo;
+        //CmiPrintf("[%d][%d][%d] CkPostBufferInternal peerAckInfo=%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), source.peerAckInfo);
+
+        memcpy(source.layerInfo, dest.layerInfo, layerInfoSize);
+      }
+      p|source;
+    }
+
+    bool allOpsComplete = false;
+
+    // check for completion
+    if(ncpyMode != CkNcpyMode::RDMA) { //operation is complete
+      if(numops == 1) // complete
+        allOpsComplete = true;
+      else { // update counter
+        NcpyEmInfo *ncpyEmInfo = (NcpyEmInfo *)ref;
+        ncpyEmInfo->counter++;
+        if(ncpyEmInfo->counter == ncpyEmInfo->numOps) {
+          allOpsComplete = true;
+        }
+      }
+    } else {
+      //CmiPrintf("[%d][%d][%d] calling performRget and ncpyEmInfo is %p and numOps is %d, counter = %d and isPacked=%d and extraSize=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ref, ((NcpyEmInfo *)ref)->numOps, ((NcpyEmInfo *)ref)->counter, env->isPacked(), extraSize);
+      performRget(ref, destIndex, extraSize);
+    }
+
+    if(!allOpsComplete) // wait for all ops to be complete
+      return true;
+    else {
+      CmiFree(ref);
+    }
+
+    if(emMode == ncpyEmApiMode::P2P_RECV) {
+
+      CMI_ZC_MSGTYPE(env) = CMK_REG_NO_ZC_MSG;
+
+      switch(ncpyMode) {
+        case CkNcpyMode::MEMCPY:  QdCreate(1);
+                                  enqueueNcpyMessage(CkMyPe(), env);
+                                  break;
+        case CkNcpyMode::CMA   :  if(sendBackToSourceForDereg) {
+                                    // Send back to source process to de-register
+                                    invokeRemoteNcpyAckHandler(source.pe, (void *)source.refAckInfo, ncpyHandlerIdx::CMA_DEREG_ACK);
+                                  }
+                                  QdCreate(1);
+                                  enqueueNcpyMessage(CkMyPe(), env);
+                                  break;
+
+        default                :  CmiAbort("Invalid transfer mode\n");
+                                  break;
+      }
+    } else if(emMode == ncpyEmApiMode::BCAST_RECV) {
+      switch(ncpyMode) {
+        case CkNcpyMode::MEMCPY:  // Invoke the bcast Ack Handler after 'numops' memcpy operations are complete
+                                  CkAssert(source.refAckInfo != NULL);
+                                  CkRdmaEMBcastAckHandler((void *)source.refAckInfo);
+                                  handleMsgOnChildPostCompletionForRecvBcast(env);
+                                  break;
+
+        case CkNcpyMode::CMA   :  // Invoke the Ack handler on the parent node to signal completion
+                                  sendAckMsgToParent(env);
+                                  if(t->child_count == 0) {
+                                    handleMsgOnChildPostCompletionForRecvBcast(env);
+                                  } else {
+                                    // Allocate a structure NcpyBcastInterimAckInfo to maintain state for ack handling
+                                    NcpyBcastInterimAckInfo *bcastAckInfo = allocateInterimNodeAckObj(env, NULL, CkMyPe());
+                                    handleMsgOnInterimPostCompletionForRecvBcast(env, bcastAckInfo, CkMyPe());
+                                  }
+                                  break;
+
+        default                :  CmiAbort("Invalid transfer mode\n");
+                                  break;
+      }
+    } else {
+      CmiAbort("Invalid operation mode\n");
+    }
+    return true;
+  } else if(CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_DONE_MSG) {
+
+    // TODO: check destSize and srcSize
+    memcpy(destBuffer, post.srcBuffer, post.srcSize);
+
+    post.srcBuffer = destBuffer;
+    post.srcSize = destSize;
+
+    post.ncpyEmInfo->counter++;
+
+    if(env->getMsgtype() == ArrayBcastFwdMsg) {
+      CkArray *mgr = getArrayMgrFromMsg(env);
+      int arraySize = mgr->getNumLocalElems();
+
+      CkMigratable *elem = mgr->getEltFromArrMgr(post.arrayIndex);
+      int localIndex = mgr->getEltLocalIndex(post.arrayIndex);
+      //post->tagArray[CmiMyRank() * arraySize * numops + localIndex * numops + post->opIndex] = post->tag;
+      //post->tagArray[CmiMyRank() * arraySize * numops + localIndex * numops + post->opIndex] = post->tag;
+      //
+      //post->tagArray[CmiMyRank()][localIndex*numops + post->opIndex] = (int )(post->tag);
+      (*(post.tagArray))[CmiMyRank()][localIndex * numops + post.opIndex] = post.tag;
+
+      int arrayIndex = post.ncpyEmInfo->arrayId;
+
+      if(post.ncpyEmInfo->counter == numops) {
+
+
+        //CmiPrintf("[%d][%d][%d] CkPostBuffer rdma layer all ops completed for secondary array element idx=%d, elem is %p, count=%d, localElemId=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), arrayIndex, elem, post->opIndex, mgr->getEltLocalIndex(post->arrayIndex));
+        mgr->forwardZCMsgToSpecificElem(env, elem);
+      }
+      //CMI_ZC_MSGTYPE(env) = CMK_REG_NO_ZC_MSG;
+      //// Enqueue message
+      //enqueueNcpyMessage(CkMyPe(), post.ncpyEmInfo->msg);
+      //// Free ncpyEmInfo
+      //CmiFree(post.ncpyEmInfo);
+    } else if(env->getMsgtype() == ForBocMsg) {
+      int localIndex = CmiMyRank();
+      (*(post.tagArray))[CmiMyRank()][post.opIndex] = post.tag;
+      if(post.ncpyEmInfo->counter == numops) {
+        //CmiPrintf("[%d][%d][%d] CkPostBuffer rdma layer all ops completed for secondary group element group idx=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), CmiMyRank());
+        CmiHandleMessage(env);
+      }
+    }
+    return false;
+  }
+}
+
+void CkPostAndMatchBufferInternal(void *destBuffer, size_t destSize, CkNcpyBufferPost *post, int index) {
+  CkPerformRget(post[index], destBuffer, destSize);
+}
+
+
+void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag) {
+  // check in posted req table
+  auto iter = CkpvAccess(ncpyPostedReqMap).find(tag);
+  if(iter == CkpvAccess(ncpyPostedReqMap).end()) {
+
+    auto iter2 = CkpvAccess(ncpyPostedBufferMap).find(tag);
+
+    if(iter2 == CkpvAccess(ncpyPostedBufferMap).end()) {
+
+      CkPostedBuffer postedBuff;
+      postedBuff.buffer = destBuffer;
+      postedBuff.bufferSize = destSize;
+      // not found, insert into ncpyPostedBufferMap
+      CkpvAccess(ncpyPostedBufferMap).emplace(tag, postedBuff);
+    } else {
+      CkAbort("CkPostBufferInternal: tag %d already exists, use another tag!\n", tag);
+    }
+
+    // not found, insert into ncpyPostedBufferMap
+    //CkAbort("CkPostBufferInternal: not found tag! Unimplemented\n");
+
+  } else { // found, perform rget
+    CkNcpyBufferPost post = iter->second;
+
+    CkNcpyBufferPost *post2 = &(iter->second);
+
+    if(CkPerformRget(post, destBuffer, destSize))  {
+      CkpvAccess(ncpyPostedReqMap).erase(iter);
+    }
+  }
+}
+
+void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag) {
+  // check in posted req table
+  auto iter = CksvAccess(ncpyPostedReqNodeMap).find(tag);
+  if(iter == CksvAccess(ncpyPostedReqNodeMap).end()) {
+
+    auto iter2 = CksvAccess(ncpyPostedBufferNodeMap).find(tag);
+
+    if(iter2 == CksvAccess(ncpyPostedBufferNodeMap).end()) {
+      CkPostedBuffer postedBuff;
+      postedBuff.buffer = destBuffer;
+      postedBuff.bufferSize = destSize;
+
+      // not found, insert into ncpyPostedBufferMap
+      CmiLock(CksvAccess(_nodeZCBufferReqLock));
+      CksvAccess(ncpyPostedBufferNodeMap).emplace(tag, postedBuff);
+      CmiUnlock(CksvAccess(_nodeZCBufferReqLock));
+    } else {
+      CkAbort("CkPostNodeBufferInternal: tag %d already exists, use another tag!\n", tag);
+    }
+
+    // not found, insert into ncpyPostedBufferMap
+    //CkAbort("CkPostNodeBufferInternal: not found tag! Unimplemented\n");
+
+  } else { // found, perform rget
+    CkNcpyBufferPost post = iter->second;
+
+    if(CkPerformRget(post, destBuffer, destSize)) {
+      CmiLock(CksvAccess(_nodeZCPostReqLock));
+      CksvAccess(ncpyPostedReqNodeMap).erase(iter);
+      CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+    }
+  }
+}
+
+
+void updatePeerCounter(void *ref) {
+  NcpyBcastRecvPeerAckInfo *peerAckInfo = (NcpyBcastRecvPeerAckInfo *)ref;
+  //peerAckInfo->decNumPeers();
+  CmiPrintf("[%d][%d][%d] ^^^^^^ updatePeerCounter begin peerAckInfo=%p and numPeers is %d  and numElems is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), peerAckInfo, peerAckInfo->getNumPeers(), peerAckInfo->getNumElems());
+
+  if(peerAckInfo->decNumElems() - 1 == 0 && peerAckInfo->getNumPeers() == 0) {
+    //CmiPrintf("[%d][%d][%d] updatePeerCounter ready to enqueue msg\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+    envelope *env = (envelope *)peerAckInfo->msg;
+    CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
+
+    if(env->getMsgtype() == ArrayBcastFwdMsg) {
+      CkArray *mgr = getArrayMgrFromMsg(env);
+      CmiPrintf("[%d][%d][%d] updatePeerCounter ready to enqueue msg - array message sending to 0th elem, peerParentPe=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), peerAckInfo->peerParentPe);
+
+
+      QdCreate(1);
+      enqueueNcpyMessage(peerAckInfo->peerParentPe, env);
+      //CmiHandleMessage(env);
+      //CmiPushPE(CmiRankOf(peerAckInfo->peerParentPe), env);
+      //mgr->forwardZCMsgToZerothElem(env);
+    } else if(env->getMsgtype() == ForBocMsg) {
+      CmiPrintf("[%d][%d][%d] updatePeerCounter ready to enqueue msg - group message pushing to pe:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), peerAckInfo->peerParentPe);
+      CmiPushPE(CmiRankOf(peerAckInfo->peerParentPe), env);
+    }
+  }
+
+  CmiPrintf("[%d][%d][%d] ######## updatePeerCounter end peerAckInfo=%p and numPeers is %d  and numElems is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), peerAckInfo, peerAckInfo->getNumPeers(), peerAckInfo->getNumElems());
+}
+
+void incPeerCounter(void *ref) {
+  NcpyBcastRecvPeerAckInfo *peerAckInfo = (NcpyBcastRecvPeerAckInfo *)ref;
+  peerAckInfo->decNumPeers();
+  //CmiPrintf("[%d][%d][%d] incPeerCounter incremented to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), peerAckInfo->getNumPeers());
+}
+
+void setPosted(std::vector<std::vector<int>> *tagArray, envelope *env, int elemIndex, int numops, int opIndex) {
+  int localIndex = -1;
+
+  if(env->getMsgtype() == ArrayBcastFwdMsg) {
+    CkArray *mgr = getArrayMgrFromMsg(env);
+    int arraySize = mgr->getNumLocalElems();
+    localIndex = mgr->getEltLocalIndex(elemIndex);
+    //CmiPrintf("[%d][%d][%d] setPosted value of tagArray is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), (*tagArray)[CmiMyRank()][localIndex * numops + opIndex]);
+    //return (tagArray[CmiMyRank() * arraySize * numops + localIndex * numops + opIndex] == -1);
+    (*tagArray)[CmiMyRank()][localIndex * numops + opIndex] = 0;
+  } else {
+    localIndex = CmiMyRank();
+    //CmiPrintf("[%d][%d][%d] setPosted value of tagArray for groups is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), (*tagArray)[CmiMyRank()][opIndex]);
+    (*tagArray)[CmiMyRank()][opIndex] = 0;
+  }
+}
+
+bool isUnposted(std::vector<std::vector<int>> *tagArray, envelope *env, int elemIndex, int numops) {
+  int opIndex = 0;
+  int localIndex = -1;
+  if(env->getMsgtype() == ArrayBcastFwdMsg) {
+    CkArray *mgr = getArrayMgrFromMsg(env);
+    int arraySize = mgr->getNumLocalElems();
+    localIndex = mgr->getEltLocalIndex(elemIndex);
+    //CmiPrintf("[%d][%d][%d] isPosted value of tagArray is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), (*tagArray)[CmiMyRank()][localIndex * numops + opIndex]);
+    //return (tagArray[CmiMyRank() * arraySize * numops + localIndex * numops + opIndex] == -1);
+    return ((*tagArray)[CmiMyRank()][localIndex * numops + opIndex] == -1 );
+  } else {
+    localIndex = CmiMyRank();
+    //CmiPrintf("[%d][%d][%d] isPosted value of tagArray for groups is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), (*tagArray)[CmiMyRank()][opIndex]);
+    return ((*tagArray)[CmiMyRank()][opIndex] == -1);
+  }
+}
+
+int extractStoredBuffer(std::vector<std::vector<int>> *tagArray, envelope *env, int elemIndex, int numops, int opIndex, void *&ptr) {
+  int tag = 0;
+  int localIndex = -1;
+  int buffSize = -1;
+
+  if(env->getMsgtype() == ArrayBcastFwdMsg) {
+    CkArray *mgr = getArrayMgrFromMsg(env);
+    int arraySize = mgr->getNumLocalElems();
+    localIndex = mgr->getEltLocalIndex(elemIndex);
+    tag = (*tagArray)[CmiMyRank()][localIndex * numops + opIndex];
+  } else if(env->getMsgtype() == ForBocMsg) {
+    localIndex = CmiMyRank();
+    tag = (*tagArray)[CmiMyRank()][opIndex];
+  }
+
+  //int tag = tagArray[CmiMyRank() * arraySize * numops + arrayIndex * numops + count];
+  auto iter = CkpvAccess(ncpyPostedReqMap).find(tag);
+
+  if(iter == CkpvAccess(ncpyPostedReqMap).end()) { // Entry not found in ncpyPostedReqMap
+    auto iter2 = CkpvAccess(ncpyPostedBufferMap).find(tag);
+
+    if(iter2 == CkpvAccess(ncpyPostedBufferMap).end()) {
+      CkAbort("extractStoredBuffer: Tag:%d not found on Pe:%d\n", tag, CmiMyPe());
+    } else {
+      CkPostedBuffer buff = (iter2->second);
+      ptr = buff.buffer;
+      buffSize = buff.bufferSize;
+      CkpvAccess(ncpyPostedBufferMap).erase(iter2);
+    }
+  } else {
+    CkNcpyBufferPost *post = &(iter->second);
+    ptr = post->srcBuffer;
+    buffSize = post->srcSize;
+    CkpvAccess(ncpyPostedReqMap).erase(iter);
+  }
+  return buffSize;
+}
+
+void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, CkNcpyBufferPost *post, int arrayIndex, void *peerAckInfo) {
+
+  //incPeerCounter(peerAckInfo);
+
+  char *ref = (char *)CmiAlloc(sizeof(NcpyEmInfo));
+  setNcpyEmInfo(ref, env, numops, NULL, emMode);
+
+  ((NcpyEmInfo *)ref)->arrayId = arrayIndex;
+
+  for(int i=0; i<numops; i++) {
+    post[i].ncpyEmInfo = (NcpyEmInfo *)ref;
+    //CmiPrintf("[%d][%d][%d] CkPostBufferLater i=%d posting tag=%d and setting ncpyEmInfo to %p \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), i, post[i].tag, post[i].ncpyEmInfo);
+    //if(env->getMsgtype() == ForNodeBocMsg) {
+    //  CmiLock(CksvAccess(_nodeZCPostReqLock));
+    //  CksvAccess(ncpyPostedReqNodeMap).emplace(post[i].tag, post[i]);
+    //  CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+    //} else {
+    //  CkpvAccess(ncpyPostedReqMap).emplace(post[i].tag, post[i]);
+    //}
+//    CkpvAccess(ncpyPostedReqMap).emplace(post[i].tag, post[i]);
+  }
+}
+
+void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag) {
+
+  //TODO: check if this is still required
+  post[index].postLater = true;
+
+  // check in posted buffer table
+  auto iter = CkpvAccess(ncpyPostedBufferMap).find(tag);
+  if(iter == CkpvAccess(ncpyPostedBufferMap).end()) {
+
+    auto iter2 = CkpvAccess(ncpyPostedReqMap).find(tag);
+
+    if(iter2 == CkpvAccess(ncpyPostedReqMap).end()) {
+      // not found, insert into ncpyPostedReqMap
+      post[index].tag = tag;
+      CkpvAccess(ncpyPostedReqMap).emplace(post[index].tag, post[index]);
+    } else {
+      CkAbort("CkMatchBuffer: tag %d already exists, use another tag!\n", tag);
+    }
+  } else { // found, perform rget
+
+    CkPostedBuffer *buff = &(iter->second);
+
+    post[index].tag = tag;
+
+    if(CkPerformRget((post[index]), buff->buffer, buff->bufferSize)) {
+      CkpvAccess(ncpyPostedBufferMap).erase(iter);
+    }
+
+    //CkAbort("CkMatchBuffer: not found tag! Unimplemented\n");
+  }
+
+
+  CkPrintf("[%d][%d][%d] Printing out map values\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+
+
+
+  for(auto iter = CkpvAccess(ncpyPostedReqMap).begin(); iter != CkpvAccess(ncpyPostedReqMap).end(); ++iter) {
+    CkNcpyBufferPost *post2 = &(iter->second);
+    CmiPrintf("[%d][%d][%d] tag = %d, post.srcBuffer=%p, post.srcSize=%d \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), iter->first, post2->srcBuffer, post2->srcSize);
+  }
+}
+
+void CkMatchNodeBuffer(CkNcpyBufferPost *post, int index, int tag) {
+
+  //TODO: check if this is still required
+  post[index].postLater = true;
+
+  // check in posted buffer table
+  auto iter = CksvAccess(ncpyPostedBufferNodeMap).find(tag);
+  if(iter == CksvAccess(ncpyPostedBufferNodeMap).end()) {
+
+    auto iter2 = CksvAccess(ncpyPostedReqNodeMap).find(tag);
+
+    if(iter2 == CksvAccess(ncpyPostedReqNodeMap).end()) {
+      // not found, insert into ncpyPostedReqNodeMap
+      post[index].tag = tag;
+      CmiLock(CksvAccess(_nodeZCPostReqLock));
+      CksvAccess(ncpyPostedReqNodeMap).emplace(post[index].tag, post[index]);
+      CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+    } else {
+      CkAbort("CkMatchNodeBuffer: tag %d already exists, use another tag!\n", tag);
+    }
+  } else { // found, perform rget
+
+    CkPostedBuffer *buff = &(iter->second);
+    post[index].tag = tag;
+    if(CkPerformRget((post[index]), buff->buffer, buff->bufferSize)) {
+      CmiLock(CksvAccess(_nodeZCBufferReqLock));
+      CksvAccess(ncpyPostedBufferNodeMap).erase(iter);
+      CmiUnlock(CksvAccess(_nodeZCBufferReqLock));
+    }
+
+    //CkAbort("CkMatchBuffer: not found tag! Unimplemented\n");
+  }
+}
