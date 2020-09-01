@@ -1275,6 +1275,27 @@ bool CkArrayBroadcaster::deliver(CkArrayMessage *bcast, ArrayElement *el,
   }
 }
 
+bool CkArrayBroadcaster::deliverAlreadyDelivered(CkArrayMessage *bcast, ArrayElement *el, bool doFree)
+{
+  int &elBcastNo=getData(el);
+  DEBB((AA "Delivering broadcast %d to element %s\n" AB,elBcastNo,idx2str(el)));
+
+  CkAssert(UsrToEnv(bcast)->getMsgtype() == ArrayBcastFwdMsg);
+
+  if (!broadcastViaScheduler)
+    return el->ckInvokeEntry(bcast->array_ep_bcast(), bcast, doFree);
+  else {
+    if (!doFree) {
+      CkArrayMessage *newMsg = (CkArrayMessage *)CkCopyMsg((void **)&bcast);
+      bcast = newMsg;
+    }
+    envelope *env = UsrToEnv(bcast);
+    env->setRecipientID(el->ckGetID());
+    CkArrayManagerDeliver(CkMyPe(), bcast, 0);
+    return true;
+  }
+}
+
 #if CMK_CHARM4PY
 
 extern void (*ArrayBcastRecvExtCallback)(int, int, int, int, int *, int, int, char *, int);
@@ -1544,6 +1565,11 @@ void CkArray::recvBroadcast(CkMessage* m) {
 #if CMK_CHARM4PY
     broadcaster->deliver(msg, localElemVec, thisgroup.idx, stableLocations);
 #else
+      // Do not free if CMK_ZC_BCAST_RECV_DONE_MSG, since it'll be freed by the
+      // first element during CMK_ZC_BCAST_ALL_DONE_MSG
+      if (zc_msgtype == CMK_ZC_BCAST_RECV_DONE_MSG) {
+        updateTagArray(env, localElemVec.size());
+      }
     for (unsigned int i = 0; i < len; ++i) {
       bool doFree = false;
       if (stableLocations && i == len-1) doFree = true;
@@ -1575,6 +1601,11 @@ void CkArray::forwardZCMsgToOtherElems(envelope *env) {
     if (stableLocations && i == len-1 && CMI_ZC_MSGTYPE(env)!=CMK_ZC_BCAST_RECV_DONE_MSG) doFree = true;
     broadcaster->deliver((CkArrayMessage *)EnvToUsr(env), (ArrayElement*)localElemVec[i], doFree);
   }
+}
+
+void CkArray::forwardZCMsgToSpecificElem(envelope *env, CkMigratable *elem) {
+  bool doFree = false;
+  broadcaster->deliverAlreadyDelivered((CkArrayMessage *)EnvToUsr(env), (ArrayElement*)elem, doFree);
 }
 
 void CkArray::flushStates() {
