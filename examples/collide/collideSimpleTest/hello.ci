@@ -1,0 +1,15 @@
+mainmodule hello {
+  readonly CProxy_main mid;
+  readonly CProxy_Hello arr;
+  readonly int nElements;
+
+  mainchare main {
+    entry main(CkArgMsg*);
+    entry void maindone(void);
+  };
+
+  array [1D] Hello {
+    entry Hello(CollideHandle collide);
+    entry void DoIt(void);
+  };
+};

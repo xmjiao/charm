@@ -9,7 +9,6 @@
 #if COLLIDE_TRACE
 //copious annoying debugging output
 #  define SRM_STATUS(x) ckout<<"["<<CkMyPe()<<"] C.Sync> "<<x<<endl;
-#  define CM_STATUS(x) ckout<<"["<<CkMyPe()<<"] C.Mgr> "<<x<<endl;
 #  define CC_STATUS(x) { \
   char buf[100]; \
   voxName(thisIndex,buf); \
@@ -73,6 +72,7 @@ void CollideUnregister(CollideHandle h,int chunkNo) {
 void CollideBoxesPrio(CollideHandle h,int chunkNo,
     int nBox,const bbox3d *boxes,const int *prio)
 {
+  CmiPrintf("[%d][%d][%d] CollideBoxesPrio chunkNo:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), chunkNo);
   CProxy_collideMgr mgr(h);
   mgr.ckLocalBranch()->contribute(chunkNo,nBox,boxes,prio);
 }
@@ -415,6 +415,7 @@ collideMgr::collideMgr(const CollideGrid3d &gridMap_,
 void collideMgr::registerContributor(int chunkNo)
 {
   nContrib++;
+  CmiPrintf("[%d][%d][%d] registerContributor chunkNo:%d, nContrib:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), chunkNo, nContrib);
   CM_STATUS("Contributor register: now "<<nContrib);
 }
 void collideMgr::unregisterContributor(int chunkNo)
