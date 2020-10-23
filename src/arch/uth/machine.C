@@ -249,24 +249,39 @@ void CmiFreeBroadcastAllFn(int size, char *msg)
 #endif
 }
 
+void CmiForwardMsgToPeers(int size, char *msg) {
+  CmiSyncBroadcastFn(size, msg);
+}
+
+void CmiPushPE(int rank, void *msg) {
+  CdsFifo_Enqueue(CmiQueues[rank], msg);
+#if CMI_QD
+  CQdCreate(CpvAccess(cQdState), 1);
+#endif
+}
+
+
+
 void CmiWithinNodeBroadcastFn(int size, char* msg) {
   int nodeFirst = CmiNodeFirst(CmiMyNode());
   int nodeLast = nodeFirst + CmiNodeSize(CmiMyNode());
-  if (CMI_MSG_NOKEEP(msg)) {
-    for (int i = nodeFirst; i < CmiMyPe(); i++) {
-      CmiReference(msg);
-      CmiFreeSendFn(i, size, msg);
-    }
-    for (int i = CmiMyPe() + 1; i < nodeLast; i++) {
-      CmiReference(msg);
-      CmiFreeSendFn(i, size, msg);
-    }
-  } else {
-    for (int i = nodeFirst; i < CmiMyPe(); i++) {
-      CmiSyncSendFn(i, size, msg);
-    }
-    for (int i = CmiMyPe() + 1; i < nodeLast; i++) {
-      CmiSyncSendFn(i, size, msg);
+  if(CMI_ZC_MSGTYPE(msg) != CMK_ZC_BCAST_RECV_MSG) {
+    if (CMI_MSG_NOKEEP(msg)) {
+      for (int i = nodeFirst; i < CmiMyPe(); i++) {
+        CmiReference(msg);
+        CmiFreeSendFn(i, size, msg);
+      }
+      for (int i = CmiMyPe() + 1; i < nodeLast; i++) {
+        CmiReference(msg);
+        CmiFreeSendFn(i, size, msg);
+      }
+    } else {
+      for (int i = nodeFirst; i < CmiMyPe(); i++) {
+        CmiSyncSendFn(i, size, msg);
+      }
+      for (int i = CmiMyPe() + 1; i < nodeLast; i++) {
+        CmiSyncSendFn(i, size, msg);
+      }
     }
   }
   CmiSyncSendAndFree(CmiMyPe(), size, msg);
