@@ -626,11 +626,7 @@ void ParamList::beginUnmarshall(XStr& str) {
 }
 
 void ParamList::copyFromPostedPtrs(XStr& str, bool isSDAGGen) {
-  str << "#if CMK_ONESIDED_IMPL\n";
   callEach(&Parameter::copyFromPostedPtrs, str, true, isSDAGGen, false);
-  str << "#else\n";
-  callEach(&Parameter::copyFromPostedPtrs, str, false, isSDAGGen, false);
-  str << "#endif\n";
 }
 
 void ParamList::storePostedRdmaPtrs(XStr& str, bool isSDAGGen) {
@@ -648,13 +644,7 @@ void ParamList::extractPostedPtrs(XStr& str, bool isSDAGGen) {
 //  //  callEach(&Parameter::storePostedRdmaPtrs, str, true, isSDAGGen, true, count);
 //  //} else {
     int count = 0;
-    str << "#if CMK_ONESIDED_IMPL\n";
     callEach(&Parameter::extractPostedPtrs, str, true, isSDAGGen, false, count);
-
-//    str << "#else\n";
-    //callEach(&Parameter::storePostedRdmaPtrs, str, false, isSDAGGen, false);
-    str << "#endif\n";
-//  // }
 }
 
 void ParamList::printPeerAckInfo(XStr& str, bool isSDAGGen) {
@@ -663,13 +653,7 @@ void ParamList::printPeerAckInfo(XStr& str, bool isSDAGGen) {
 //  //  callEach(&Parameter::storePostedRdmaPtrs, str, true, isSDAGGen, true, count);
 //  //} else {
     int count = 0;
-    str << "#if CMK_ONESIDED_IMPL\n";
     callEach(&Parameter::printPeerAckInfo, str, true, isSDAGGen, false, count);
-
-//    str << "#else\n";
-    //callEach(&Parameter::storePostedRdmaPtrs, str, false, isSDAGGen, false);
-    str << "#endif\n";
-//  // }
 }
 
 void Parameter::printPeerAckInfo(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count) {

@@ -2459,38 +2459,6 @@ void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, 
   }
 }
 
-#if !CMK_ONESIDED_IMPL
-void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag) {
-  CmiPrintf("[%d][%d][%d] CkPostBuffer buffer=%p, size=%d, tag=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), destBuffer, destSize, tag);
-  auto iter = CkpvAccess(ncpyPostedReqMap).find(tag);
-
-  if(iter == CkpvAccess(ncpyPostedReqMap).end()) { // Entry not found in ncpyPostedReqMap
-    CkAbort("CkPostBuffer: Tag:%d not found on Pe:%d\n", tag, CmiMyPe());
-  }
-
-  CkNcpyBufferPost post = iter->second;
-  CkpvAccess(ncpyPostedReqMap).erase(iter);
-
-  envelope *env = (envelope *)post.ncpyEmInfo->msg;
-  int numops = post.ncpyEmInfo->numOps;
-  ncpyEmApiMode emMode = post.ncpyEmInfo->mode;
-
-  memcpy(destBuffer, post.srcBuffer, post.srcSize);
-
-  post.ncpyEmInfo->counter++;
-  if(post.ncpyEmInfo->counter == numops) {
-
-    CmiPrintf("[%d][%d][%d] CkPostBuffer generic layer all ops completed\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
-
-    CMI_ZC_MSGTYPE(env) = CMK_REG_NO_ZC_MSG;
-    // Enqueue message
-    enqueueNcpyMessage(CkMyPe(), post.ncpyEmInfo->msg);
-    // Free ncpyEmInfo
-    CmiFree(post.ncpyEmInfo);
-  }
-}
-#endif
-
 void setNcpyEmInfo(char *ref, envelope *env, int &numops, void *forwardMsg, ncpyEmApiMode emMode) {
 
     NcpyEmInfo *ncpyEmInfo = (NcpyEmInfo *)ref;
