@@ -1,6 +1,6 @@
 #include "zc_post_delayed.decl.h"
 #define SIZE 2000
-#define NUM_ELEMENTS_PER_PE 2
+#define NUM_ELEMENTS_PER_PE 10
 #define CONSTANT 188
 
 CProxy_arr arrProxy;
@@ -48,8 +48,8 @@ class tester : public CBase_tester {
       assignValuesToConstant(srcBuffer2, SIZE, CONSTANT);
 
       arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
-      //grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
-      //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+      grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
+      ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
 
       // Test p2p sends
       //arrProxy[9].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
@@ -89,7 +89,7 @@ class tester : public CBase_tester {
     }
 
     void bcastDone() {
-      if(++counter == 1) {
+      if(++counter == 3) {
         counter = 0;
         delete [] srcBuffer1;
         delete [] srcBuffer2;
@@ -111,7 +111,7 @@ class arr : public CBase_arr {
     }
 
     void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
-      CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
+      //CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       tag = CkPostBufferLater(ncpyPost, 0);
 
       thisProxy[thisIndex].readyToPost();
@@ -124,12 +124,12 @@ class arr : public CBase_arr {
     }
 
     void readyToPost() {
-      CkPrintf("[%d][%d][%d][%d] ########## readyToPost\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
+      //CkPrintf("[%d][%d][%d][%d] ########## readyToPost\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       CkPostBuffer(destBuffer, (size_t) SIZE, tag);
     }
 
     void recv_zerocopy(int *buffer, size_t size, bool isBcast) {
-      CkPrintf("[%d][%d][%d][%d] ^^^^^^^^^^^ recv_zerocopy regular em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
+      //CkPrintf("[%d][%d][%d][%d] ^^^^^^^^^^^ recv_zerocopy regular em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       verifyValuesWithConstant(destBuffer, SIZE, CONSTANT);
 
       if(isBcast) {
@@ -158,7 +158,7 @@ class grp : public CBase_grp {
     }
 
     void recv_zerocopy(int *&buffer1, size_t &size1, int *&buffer2, size_t &size2, bool isBcast, CkNcpyBufferPost *ncpyPost) {
-      CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
+      //CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       tag1 = CkPostBufferLater(ncpyPost, 0);
       tag2 = CkPostBufferLater(ncpyPost, 1);
 
