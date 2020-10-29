@@ -48,8 +48,8 @@ class tester : public CBase_tester {
       assignValuesToConstant(srcBuffer2, SIZE, CONSTANT);
 
       arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
-      grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
-      ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+      //grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
+      //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
 
       // Test p2p sends
       //arrProxy[9].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
@@ -89,7 +89,7 @@ class tester : public CBase_tester {
     }
 
     void bcastDone() {
-      if(++counter == 3) {
+      if(++counter == 1) {
         counter = 0;
         delete [] srcBuffer1;
         delete [] srcBuffer2;

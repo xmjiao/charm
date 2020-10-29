@@ -943,11 +943,12 @@ envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg
  * the destination to perform zerocopy operations as a part of the Zerocopy Entry Method
  * API
  */
-void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, CkNcpyBufferPost *postStructs){
+void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, int arrayIndex, CkNcpyBufferPost *postStructs){
 
   int refSize = 0;
   char *ref;
   int layerInfoSize, ncpyObjSize, extraSize;
+
 
   CkNcpyMode ncpyMode = findTransferMode(getSrcPe(env), CkMyPe());
   CmiSpanningTreeInfo *t = NULL;
@@ -958,6 +959,77 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootN
   }
 
   layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
+
+  std::vector< std::vector<int>> *tagArray;
+  NcpyBcastRecvPeerAckInfo *peerAckInfo = NULL;
+  //int *tagArray = NULL;
+  //
+  if(emMode == ncpyEmApiMode::BCAST_RECV) {
+
+  if(env->getMsgtype() == ArrayBcastFwdMsg) {
+    CkArray *mgr = getArrayMgrFromMsg(env);
+    int numElems = mgr->getNumLocalElems();
+
+    //if(numElems > 1) {
+      //tagArray = new int[CmiMyNodeSize() * numElems * numops];
+      tagArray = new std::vector< std::vector<int> >;
+      //int[CmiMyNodeSize() * numElems * numops];
+
+      //memset(tagArray, -1, CmiMyNodeSize() * numElems * numops * sizeof(int));
+      tagArray->resize(CmiMyNodeSize());
+
+      int localIndex = mgr->getEltLocalIndex(arrayIndex);
+      (*tagArray)[CmiMyRank()].resize(numElems * numops);
+
+      std::fill((*tagArray)[CmiMyRank()].begin(), (*tagArray)[CmiMyRank()].end(), -1);
+
+      for(int i=0; i < numops; i++)
+        (*(tagArray))[CmiMyRank()][localIndex * numops + i] = 0; // Is already posted
+
+      peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      //peerAckInfo->setNumPeers(CmiMyNodeSize() * numElems - 1);
+      peerAckInfo->setNumElems(numElems - 1);
+      peerAckInfo->setNumPeers(CmiMyNodeSize() - 1);
+      peerAckInfo->msg = (void *)env;
+      peerAckInfo->peerParentPe = CmiMyPe();
+    //}
+    CmiPrintf("[%d][%d][%d] CkRdmaIssueRgets Array Bcast Msg env=%p numops=%d num array elems = %d, tagArray =%p, peerAckInfo=%p and setting it to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, numops, numElems, tagArray, peerAckInfo, numElems - 1);
+  }
+
+#if CMK_SMP
+  else if(env->getMsgtype() == ForBocMsg) {
+    int localIndex = CmiMyRank();
+
+    //CkArray *mgr = getArrayMgrFromMsg(env);
+    int numElems = CmiMyNodeSize();
+
+    //if(numElems > 1) {
+      //tagArray = new int[CmiMyNodeSize() * numElems * numops];
+      tagArray = new std::vector< std::vector<int> >;
+      //int[CmiMyNodeSize() * numElems * numops];
+
+      //memset(tagArray, -1, CmiMyNodeSize() * numElems * numops * sizeof(int));
+      tagArray->resize(CmiMyNodeSize());
+
+      for(int i=0; i < CmiMyNodeSize(); i++) {
+        (*tagArray)[i].resize(numops);
+        std::fill((*tagArray)[i].begin(), (*tagArray)[i].end(), -1);
+      }
+
+      for(int i=0; i < numops; i++)
+        (*tagArray)[CmiMyRank()][i] = 0; // Is already posted
+
+      peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      //peerAckInfo->setNumPeers(CmiMyNodeSize() * numElems - 1);
+      peerAckInfo->setNumElems(numElems - 1);
+      peerAckInfo->setNumPeers(0);
+      peerAckInfo->msg = (void *)env;
+      peerAckInfo->peerParentPe = CmiMyPe();
+    //}
+      CmiPrintf("[%d][%d][%d] CkRdmaIssueRgets Group Bcast Msg env=%p numops=%d num array elems = %d, tagArray =%p, peerAckInfo=%p and setting it to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, numops, numElems, tagArray, peerAckInfo, numElems - 1);
+  }
+#endif
+  }
 
   if(ncpyMode == CkNcpyMode::RDMA) {
     preprocessRdmaCaseForRgets(layerInfoSize, ncpyObjSize, extraSize, refSize, numops);
@@ -972,6 +1044,9 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootN
   if(ncpyMode == CkNcpyMode::RDMA) {
     setNcpyEmInfo(ref, env, numops, NULL, emMode);
   }
+
+  //((NcpyEmInfo *)ref)->tagArray = tagArray;
+  //((NcpyEmInfo *)ref)->peerAckInfo = peerAckInfo;
 
   PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
@@ -1009,6 +1084,10 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootN
     source.regMode = dest.regMode;
 
     source.deregMode = dest.deregMode;
+
+    source.tagArray = tagArray;
+
+    source.peerAckInfo = peerAckInfo;
 
     memcpy(source.layerInfo, dest.layerInfo, layerInfoSize);
 
@@ -1404,6 +1483,23 @@ void incPeerCounter(void *ref) {
   CmiPrintf("[%d][%d][%d] incPeerCounter incremented to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), peerAckInfo->getNumPeers());
 }
 
+void setPosted(std::vector<std::vector<int>> *tagArray, envelope *env, int elemIndex, int numops, int opIndex) {
+  int localIndex = -1;
+
+  if(env->getMsgtype() == ArrayBcastFwdMsg) {
+    CkArray *mgr = getArrayMgrFromMsg(env);
+    int arraySize = mgr->getNumLocalElems();
+    localIndex = mgr->getEltLocalIndex(elemIndex);
+    CmiPrintf("[%d][%d][%d] setPosted value of tagArray is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), (*tagArray)[CmiMyRank()][localIndex * numops + opIndex]);
+    //return (tagArray[CmiMyRank() * arraySize * numops + localIndex * numops + opIndex] == -1);
+    (*tagArray)[CmiMyRank()][localIndex * numops + opIndex] = 0;
+  } else {
+    localIndex = CmiMyRank();
+    CmiPrintf("[%d][%d][%d] setPosted value of tagArray for groups is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), (*tagArray)[CmiMyRank()][opIndex]);
+    (*tagArray)[CmiMyRank()][opIndex] = 0;
+  }
+}
+
 bool isUnposted(std::vector<std::vector<int>> *tagArray, envelope *env, int elemIndex, int numops) {
   int opIndex = 0;
   int localIndex = -1;
@@ -1417,7 +1513,7 @@ bool isUnposted(std::vector<std::vector<int>> *tagArray, envelope *env, int elem
   } else {
     localIndex = CmiMyRank();
     CmiPrintf("[%d][%d][%d] isPosted value of tagArray for groups is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), (*tagArray)[CmiMyRank()][opIndex]);
-    return ((*tagArray)[CmiMyRank()][opIndex] == 0);
+    return ((*tagArray)[CmiMyRank()][opIndex] == -1);
   }
 }
 

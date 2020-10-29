@@ -126,7 +126,7 @@ class CkNcpyBuffer : public CmiNcpyBuffer {
   friend void constructDestinationBufferObject(NcpyOperationInfo *info, CkNcpyBuffer &dest);
 
   friend envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg);
-  friend void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, CkNcpyBufferPost *postStructs);
+  friend void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, int localIndex, CkNcpyBufferPost *postStructs);
 
   friend void readonlyGet(CkNcpyBuffer &src, CkNcpyBuffer &dest, void *refPtr);
   friend void readonlyCreateOnSource(CkNcpyBuffer &src);
@@ -224,7 +224,7 @@ struct NcpyEmBufferInfo{
  */
 envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg = NULL);
 
-void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, CkNcpyBufferPost *postStructs);
+void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, int localIndex, CkNcpyBufferPost *postStructs);
 
 void handleEntryMethodApiCompletion(NcpyOperationInfo *info);
 
@@ -522,6 +522,8 @@ int CkPostBufferLaterInternal(CkNcpyBufferPost *post, int index, bool nodeLevel)
 void updatePeerCounter(void *ref);
 
 void updateTagArray(envelope *env, int localElems);
+
+void setPosted(std::vector<std::vector<int>> *tagArray, envelope *env, int elemIndex, int numops, int opIndex);
 
 //bool isUnposted(std::vector<std::vector<int>> *tagArray, int arraySize, int localIndex, int numops);
 bool isUnposted(std::vector<std::vector<int>> *tagArray, envelope *env, int localIndex, int numops);

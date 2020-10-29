@@ -1925,7 +1925,7 @@ void Entry::genCall(XStr& str, const XStr& preCall, bool redn_wrapper, bool uses
          str << "genClosure->num_rdma_fields, genClosure->num_root_node, ";
        else
          str << "impl_num_rdma_fields, impl_num_root_node, ";
-       str << "buffPtrs, buffSizes, ncpyPost);\n";
+       str << "buffPtrs, buffSizes, impl_obj->thisIndex, ncpyPost);\n";
       }
       str << "  } else if(CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_DONE_MSG) {\n";
 
@@ -1934,22 +1934,27 @@ void Entry::genCall(XStr& str, const XStr& preCall, bool redn_wrapper, bool uses
       //str << "    int arraySize = mgr->getNumLocalElems();\n";
       param->printPeerAckInfo(str, isSDAGGen);
 
-      str << "      if(isUnposted(tagArray, env, impl_obj->thisIndex, impl_num_rdma_fields)) {\n";
+      str << "      if(isUnposted(tagArray, env, impl_obj->thisIndex,";
+      if (isSDAGGen)
+        str << " genClosure->num_rdma_fields)) {\n";
+      else
+        str << " impl_num_rdma_fields)) {\n";
       genRegularCall(str, preCall, redn_wrapper, usesImplBuf, true);
       for (int index = 0; index < numRdmaRecvParams; index++)
         str << "    if(ncpyPost[" << index << "].postLater) numPostLater++;\n";
       param->copyFromPostedPtrs(str, isSDAGGen);
-      str << " if(numPostLater == 0)\n";
+      str << " if(numPostLater == 0) {\n";
       genRegularCall(str, preCall, redn_wrapper, usesImplBuf, false);
+      str << "    updatePeerCounter(peerAckInfo);\n";
       //str << "      } else {\n";
-      str << "   else\n";
+      str << "   } else\n";
       str << "   CkRdmaPostLaterPreprocess(env, ((CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_MSG) ? ncpyEmApiMode::BCAST_RECV : ncpyEmApiMode::P2P_RECV), " << numRdmaRecvParams << ", ncpyPost, impl_obj->thisIndex, peerAckInfo);\n";
       //str << "      }\n";
       str << "  } else {\n";
       //str << "    CkArray *mgr = getArrayMgrFromMsg(env);\n";
       //str << "    int localIndex = mgr->getEltLocalIndex(impl_obj->thisIndex);\n";
       //str << "    int arraySize = mgr->getNumLocalElems();\n";
-      param->extractPostedPtrs(str, false);
+      param->extractPostedPtrs(str, isSDAGGen);
       genRegularCall(str, preCall, redn_wrapper, usesImplBuf, false);
       str << "    updatePeerCounter(peerAckInfo);\n";
       str << "  }\n";

@@ -659,8 +659,15 @@ void ParamList::printPeerAckInfo(XStr& str, bool isSDAGGen) {
 void Parameter::printPeerAckInfo(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count) {
   Type* dt = type->deref();  // Type, without &
   if (isRdma() && count == 0) {
-    str << "void *peerAckInfo = (void *)(ncpyBuffer_" << name << ".peerAckInfo);\n";
-    str << "std::vector< std::vector<int> > *tagArray = (ncpyBuffer_" << name << ".tagArray);\n";
+    str << "void *peerAckInfo = (void *)(";
+    if(isSDAGGen)
+      str << "genClosure->";
+    str << "ncpyBuffer_" << name << ".peerAckInfo);\n";
+ 
+    str << "std::vector< std::vector<int> > *tagArray = ";
+    if(isSDAGGen)
+      str << "genClosure->";
+    str << "ncpyBuffer_" << name << ".tagArray;\n";
     count++;
   }
 }
@@ -672,7 +679,22 @@ void Parameter::extractPostedPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool 
     //  str << "void *peerAckInfo = (void *)(ncpyBuffer_" << name << ".peerAckInfo);\n";
     //}
     // count, env, thisIndex, CkNcpyBuffer
-    str << arrLen << ".t = extractStoredBuffer(ncpyBuffer_" << name << ".tagArray, env, impl_obj->thisIndex, impl_num_rdma_fields, "<< count++ << ", (void *&)ncpyBuffer_" << name << "_ptr);\n";
+    if(isSDAGGen)
+      str << " genClosure->" << arrLen;
+    else
+      str << arrLen << ".t";
+    str << " = extractStoredBuffer(";
+    if(isSDAGGen)
+      str << "genClosure->";
+    str << "ncpyBuffer_" << name << ".tagArray, env, impl_obj->thisIndex,";
+    if(isSDAGGen)
+      str << "genClosure->num_rdma_fields,";
+    else
+      str << "impl_num_rdma_fields, ";
+    str << count++ << ", (void *&)(";
+    if(isSDAGGen)
+      str << "genClosure->";
+    str << "ncpyBuffer_" << name << ".ptr));\n";
   }
 }
 
@@ -707,13 +729,26 @@ void Parameter::copyFromPostedPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool
         else
           str << " sizeof(" << dt << ") * "<< arrLen << ".t);\n";
 
-        str << "    } else {\n";
-        str << "      ncpyPost[" << count << "].srcBuffer =";
+        str << "   setPosted(tagArray, env, impl_obj->thisIndex, ";
         if(isSDAGGen)
-          str << "genClosure->";
-        str << " (void *) ncpyBuffer_" << name << ".ptr;\n";
-        str << "      ncpyPost[" << count  << "].srcSize = ncpyBuffer_" << name << ".cnt;\n";
-        str << "      ncpyPost[" << count  << "].tagArray = ncpyBuffer_" << name << ".tagArray;\n";
+          str << " genClosure->num_rdma_fields,";
+        else
+          str << " impl_num_rdma_fields,";
+        str << count << ");\n";
+
+        str << "    } else {\n";
+        str << "      ncpyPost[" << count << "].srcBuffer = (void *)";
+        if(isSDAGGen) str << "genClosure->";
+        str << "ncpyBuffer_" << name << ".ptr;\n";
+
+        str << "      ncpyPost[" << count  << "].srcSize = ";
+        if(isSDAGGen) str << "genClosure->";
+        str << "ncpyBuffer_" << name << ".cnt;\n";
+
+        str << "      ncpyPost[" << count  << "].tagArray = ";
+        if(isSDAGGen) str << "genClosure->";
+        str << "ncpyBuffer_" << name << ".tagArray;\n";
+
         str << "      ncpyPost[" << count  << "].opIndex = " << count << ";\n";
         str << "      ncpyPost[" << count++ << "].arrayIndex = impl_obj->thisIndex;\n";
         str << "    }\n";
@@ -774,9 +809,9 @@ void Parameter::storePostedRdmaPtrs(XStr& str, bool genRdma, bool isSDAGGen, boo
         str << "    buffPtrs[" << count << "] = (void *)" << "ncpyBuffer_";
         str << name << "_ptr;\n";
         if(isSDAGGen)
-          str << "    buffSizes[" << count << "] = sizeof(" << dt << ") * genClosure->"<< arrLen << ";\n";
+          str << "    buffSizes[" << count++ << "] = sizeof(" << dt << ") * genClosure->"<< arrLen << ";\n";
         else
-          str << "    buffSizes[" << count << "] = sizeof(" << dt << ") * " << arrLen << ".t;\n";
+          str << "    buffSizes[" << count++ << "] = sizeof(" << dt << ") * " << arrLen << ".t;\n";
       }
     } else if (devicePath) {
       str << "  if(CMI_IS_ZC_DEVICE(env)) {\n";
@@ -904,9 +939,12 @@ void ParamList::beginUnmarshallSDAGCall(XStr& str, bool usesImplBuf) {
       } else {
         if (hasRecvRdma()) {
           str << "  CkNcpyBufferPost ncpyPost[" << entry->numRdmaRecvParams << "];\n";
+          str << "    int numPostLater=0;\n";
           for (int index = 0; index < entry->numRdmaRecvParams; index++) {
             str << "  ncpyPost[" << index << "].regMode = CK_BUFFER_REG;\n";
             str << "  ncpyPost[" << index << "].deregMode = CK_BUFFER_DEREG;\n";
+            str << "  ncpyPost[" << index << "].index = " << index << ";\n";
+            str << "  ncpyPost[" << index << "].postLater = false;\n";
           }
         }
         str << "  char *impl_buf_begin = impl_buf;\n";
