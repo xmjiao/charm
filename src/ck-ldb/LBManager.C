@@ -487,6 +487,7 @@ void LBManager::InvokeLB()
 {
   if (loadbalancers.size() > 0)
   {
+    CkPrintf("\n[%d] *** LBInvoked! ***\n\n", CkMyPe());
     loadbalancers[currentLBIndex]->InvokeLB();
   }
 }

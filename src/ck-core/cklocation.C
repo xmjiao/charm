@@ -2522,6 +2522,9 @@ int CkLocMgr::deliverMsg(CkArrayMessage *msg, CkArrayID mgr, CmiUInt8 id, const 
                    , 1);
   }
 #endif
+  CkPrintf("[%d] deliverMsg - id: %lx (home: %d), *idx: %p, hops: %d\n", CkMyPe(), id, homePe(id), idx, msg->array_hops() + 1);
+  if (idx == nullptr)
+    idx = nullptr;
 
   // Known, remote location or unknown location
   if (rec == NULL)
@@ -2539,7 +2542,7 @@ int CkLocMgr::deliverMsg(CkArrayMessage *msg, CkArrayID mgr, CmiUInt8 id, const 
       // If we are hopping more than twice, we've discovered a stale chain
       // of cache entries. Just route through home instead.
       if (msg->array_hops() > 2 && CkMyPe() != homePe(id)) {
-        destPE = homePe(id);
+        //destPE = homePe(id);
       }
       CkArrayManagerDeliver(destPE,msg,opts);
       return true;
@@ -3299,4 +3302,3 @@ void CkLocMgr::doneInserting(void)
 #endif
 
 #include "CkLocation.def.h"
-

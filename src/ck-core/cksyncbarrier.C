@@ -62,6 +62,7 @@ void CkSyncBarrier::RemoveClient(LDBarrierClient c)
 {
   delete *(c);
   clients.erase(c);
+//  CheckBarrier(false);
 }
 
 LDBarrierReceiver CkSyncBarrier::AddReceiver(std::function<void()> fn)
@@ -151,6 +152,7 @@ void CkSyncBarrier::recvLbStart(int lb_step, int sourcenode, int pe)
 
 void CkSyncBarrier::CheckBarrier(bool flood_atsync)
 {
+  CkPrintf("[%d] check - on: %s, at_count: %d, client_count: %ld\n", CkMyPe(), on ? "true" : "false", at_count, clients.size());
   if (!on) return;
 
   const auto client_count = clients.size();
@@ -182,6 +184,7 @@ void CkSyncBarrier::CheckBarrier(bool flood_atsync)
 
     if (at_barrier)
     {
+      CkPrintf("[%d] at_barrier ref: %d\n", CkMyPe(), cur_refcount);
       startedAtSync = true;
       propagate_atsync();
       at_count -= client_count;
