@@ -2879,6 +2879,7 @@ void CkLocMgr::migratableList(CkLocRec *rec, std::vector<CkMigratable *> &list)
 void CkLocMgr::emigrate(CkLocRec *rec,int toPe)
 {
 	CK_MAGICNUMBER_CHECK
+          CkPrintf("[%d] emigrate to %d for id: %lx\n", CkMyPe(), toPe, rec->getID());
 	if (toPe==CkMyPe()) return; //You're already there!
 
 #if CMK_FAULT_EVAC
