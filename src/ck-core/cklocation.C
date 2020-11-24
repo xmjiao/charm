@@ -8,19 +8,20 @@
  *  Orion Sky Lawlor, olawlor@acm.org 9/29/2001
  */
 
+#include "TopoManager.h"
+#include "charm++.h"
+#include "ck.h"
+#include "cksyncbarrier.h"
 #include "hilbert.h"
 #include "partitioning_strategies.h"
-#include "charm++.h"
-#include "register.h"
-#include "ck.h"
-#include "trace.h"
-#include "TopoManager.h"
-#include <vector>
-#include <algorithm>
-#include <sstream>
-#include <limits>
 #include "pup_stl.h"
+#include "register.h"
+#include "trace.h"
+#include <algorithm>
+#include <limits>
+#include <sstream>
 #include <stdarg.h>
+#include <vector>
 
 #if CMK_LBDB_ON
 #include "LBManager.h"
@@ -1468,8 +1469,18 @@ void CkMigratable::pup(PUP::er &p) {
 	p | asyncEvacuate;
 	if(p.isUnpacking()){myRec->AsyncEvacuate(asyncEvacuate);}
 #endif
-	
-	ckFinishConstruction();
+
+        int refcount = -1;
+        if (usesAtSync)
+        {
+          if (p.isPacking())
+          {
+            refcount = (*ldBarrierHandle)->refcount;
+          }
+          p | refcount;
+        }
+
+        ckFinishConstruction(refcount);
 }
 
 void CkMigratable::ckDestroy(void) {}
@@ -1598,7 +1609,7 @@ void CkMigratable::metaLBCallLB() {
     myRec->getLBMgr()->AtLocalBarrier(ldBarrierHandle);
 }
 
-void CkMigratable::ckFinishConstruction(void)
+void CkMigratable::ckFinishConstruction(int refcount)
 {
 //	if ((!usesAtSync) || barrierRegistered) return;
 	if (usesAtSync && _lb_args.lbperiod() != -1.0)
@@ -1608,7 +1619,7 @@ void CkMigratable::ckFinishConstruction(void)
 	if (barrierRegistered) return;
 	DEBL((AA "Registering barrier client for %s\n" AB,idx2str(thisIndexMax)));
 	if (usesAtSync) {
-	  ldBarrierHandle = myRec->getLBMgr()->AddLocalBarrierClient(this, &CkMigratable::ResumeFromSyncHelper);
+	  ldBarrierHandle = CkSyncBarrier::Object()->AddClient(this, &CkMigratable::ResumeFromSyncHelper, refcount);
 	}
 	barrierRegistered=true;
 }
@@ -2542,7 +2553,7 @@ int CkLocMgr::deliverMsg(CkArrayMessage *msg, CkArrayID mgr, CmiUInt8 id, const 
       // If we are hopping more than twice, we've discovered a stale chain
       // of cache entries. Just route through home instead.
       if (msg->array_hops() > 2 && CkMyPe() != homePe(id)) {
-        //destPE = homePe(id);
+        destPE = homePe(id);
       }
       CkArrayManagerDeliver(destPE,msg,opts);
       return true;
