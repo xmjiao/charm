@@ -948,7 +948,7 @@ do
 
 	-*|+*)
 #		Warning "passing unrecognized option $arg to all compilers and linkers"
-        OPTS_EXTRA+=" $arg"
+		OPTS_EXTRA+=" $arg"
 		;;
 	*.*)
 		[ -n "$VERBOSE" ] && echo "Adding file $arg..."
@@ -959,7 +959,7 @@ do
 	*)
 #		printUsage  "Error: Unrecognized argument $arg"
 #		Warning "passing unrecognized option $arg to all compilers and linkers"
-        OPTS_EXTRA+=" $arg"
+		OPTS_EXTRA+=" $arg"
 		;;
 	esac
 done
