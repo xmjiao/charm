@@ -278,7 +278,6 @@ enum CkElementCreation_t : uint8_t {
  */
 class CkLocMgr : public IrrGroup {
 	CkMagicNumber<CkMigratable> magic; //To detect heap corruption
-
 public:
 
 typedef std::unordered_map<CkArrayID, CkArray*, ArrayIDHasher> ArrayIdMap;
@@ -413,11 +412,11 @@ typedef std::unordered_map<CmiUInt8, CkMigratable*> ElemMap;
 
 //Advisories:
 	///This index now lives on the given processor-- update local records
-	void inform(const CkArrayIndex &idx, CmiUInt8 id, int nowOnPe);
-	void inform(CmiUInt8 id, int nowOnPe);
+  void inform(const CkArrayIndex &idx, CmiUInt8 id, int nowOnPe);
+  void inform(CmiUInt8 id, int nowOnPe);
 
 	///This index now lives on the given processor-- tell the home processor
-	void informHome(const CkArrayIndex &idx,int nowOnPe);
+  void informHome(const CkArrayIndex &idx,int nowOnPe, int epoch);
 
 	///This message took several hops to reach us-- fix it
 	void multiHop(CkArrayMessage *m);
@@ -445,8 +444,9 @@ typedef std::unordered_map<CmiUInt8, CkMigratable*> ElemMap;
 	void immigrate(CkArrayElementMigrateMessage *msg);
         void requestLocation(const CkArrayIndex &idx, int peToTell, bool suppressIfHere, int ifNonExistent, int chareType, CkArrayID mgr);
         void requestLocation(CmiUInt8 id, int peToTell, bool suppressIfHere);
-        void updateLocation(const CkArrayIndex &idx, CmiUInt8 id, int nowOnPe);
+  void updateLocation(const CkArrayIndex &idx, CmiUInt8 id, int nowOnPe);
         void updateLocation(CmiUInt8 id, int nowOnPe);
+  void updateHomeLocation(const CkArrayIndex &idx, CmiUInt8 id, int nowOnPe, int epoch);
 	void reclaimRemote(const CkArrayIndex &idx,int deletedOnPe);
 
 	/// return a list of migratables in this local record

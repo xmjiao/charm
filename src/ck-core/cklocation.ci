@@ -16,6 +16,8 @@ module CkLocation {
     entry [expedited] void updateLocation(
         CkArrayIndex idx, CmiUInt8 id, int nowOnPe);
     entry [expedited] void updateLocation(CmiUInt8 id, int nowOnPe);
+        entry [expedited] void updateHomeLocation(
+	  CkArrayIndex idx, CmiUInt8 id, int nowOnPe, int epoch);
     entry void reclaimRemote(CkArrayIndex idx,int deletedOnPe);
   };
   

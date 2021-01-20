@@ -87,7 +87,7 @@ void UpdateLocation(MigrateInfo& migData) {
   if (locMgrGid.idx == 0) {
     return;
   }
-
+  CkPrintf("Calling updateLocation from %s\n",__FUNCTION__);
   CkLocMgr *localLocMgr = (CkLocMgr *) CkLocalBranch(locMgrGid);
   // CkLocMgr only uses element IDs, so extract just that part from the ObjID
   localLocMgr->updateLocation(ck::ObjID(migData.obj.id).getElementID(), migData.to_pe);
@@ -2198,13 +2198,14 @@ void CkLocMgr::deleteManager(CkArrayID id, CkArray *mgr) {
 }
 
 //Tell this element's home processor it now lives "there"
-void CkLocMgr::informHome(const CkArrayIndex &idx,int nowOnPe)
+void CkLocMgr::informHome(const CkArrayIndex &idx,int nowOnPe, int epoch)
 {
 	int home=homePe(idx);
 	if (home!=CkMyPe() && home!=nowOnPe) {
 		//Let this element's home Pe know it lives here now
 		DEBC((AA "  Telling %s's home %d that it lives on %d.\n" AB,idx2str(idx),home,nowOnPe));
-		thisProxy[home].updateLocation(idx, lookupID(idx), nowOnPe);
+		CkPrintf("Calling updateLocation from %s\n",__FUNCTION__);
+		thisProxy[home].updateHomeLocation(idx, lookupID(idx), nowOnPe, epoch);
 	}
 }
 
@@ -2217,9 +2218,10 @@ CkLocRec *CkLocMgr::createLocal(const CkArrayIndex &idx,
 
 	CkLocRec *rec=new CkLocRec(this, forMigration, ignoreArrival, idx, id);
 	insertRec(rec, id);
+	CkPrintf("Calling inform from %s\n",__FUNCTION__);
         inform(idx, id, CkMyPe());
 
-	if (notifyHome) { informHome(idx,CkMyPe()); }
+	if (notifyHome) { informHome(idx,CkMyPe(), 0); }
 	return rec;
 }
 
@@ -2298,6 +2300,7 @@ bool CkLocMgr::addElement(CkArrayID mgr,const CkArrayIndex &idx,
                 if (homePe(idx) != CkMyPe()) {
                   DEBC((AA "Global location broadcast for new element idx %s "
                         "assigned to %d \n" AB, idx2str(idx), CkMyPe()));
+		  CkPrintf("Calling updateLocation from %s\n",__FUNCTION__);
                   thisProxy.updateLocation(id, CkMyPe());
                 }
 #endif
@@ -2361,6 +2364,7 @@ void CkLocMgr::requestLocation(const CkArrayIndex &idx, const int peToTell,
   if (lookupID(idx,id)) {
     // We found the ID so update the location for peToTell
     onPe = lastKnown(idx);
+    CkPrintf("Calling updateLocation from %s\n",__FUNCTION__);
     thisProxy[peToTell].updateLocation(idx, id, onPe);
   } else {
     // We don't know the ID so buffer the location request
@@ -2393,11 +2397,20 @@ void CkLocMgr::requestLocation(CmiUInt8 id, const int peToTell,
   if (suppressIfHere && peToTell == CkMyPe())
     return;
 
+  CkPrintf("Calling updateLocation from %s\n",__FUNCTION__);
   thisProxy[peToTell].updateLocation(id, onPe);
+}
+
+void CkLocMgr::updateHomeLocation(const CkArrayIndex &idx, CmiUInt8 id, int nowOnPe, int epoch) {
+  DEBN(("%d updateLocation for %s on %d\n", CkMyPe(), idx2str(idx), nowOnPe));
+  CkPrintf("Calling inform from %s (epoch %d)\n",__FUNCTION__, epoch);
+  inform(idx, id, nowOnPe);
+  deliverAnyBufferedMsgs(id, bufferedRemoteMsgs);
 }
 
 void CkLocMgr::updateLocation(const CkArrayIndex &idx, CmiUInt8 id, int nowOnPe) {
   DEBN(("%d updateLocation for %s on %d\n", CkMyPe(), idx2str(idx), nowOnPe));
+  CkPrintf("Calling inform from %s\n",__FUNCTION__);
   inform(idx, id, nowOnPe);
   deliverAnyBufferedMsgs(id, bufferedRemoteMsgs);
 }
@@ -2420,12 +2433,18 @@ void CkLocMgr::inform(const CkArrayIndex &idx, CmiUInt8 id, int nowOnPe) {
         idCounter = maskedID + 1;
     } else {
       if (origPe < CkNumPes())
+      {
+	CkPrintf("Calling updateLocation from (restarting) %s\n",__FUNCTION__);
         thisProxy[origPe].updateLocation(idx, id, nowOnPe);
+      }
     }
   }
 
   insertID(idx,id);
-  id2pe[id] = nowOnPe;
+  id2pe[id] = (nowOnPe);
+
+  CkPrintf("[%d] Informing that obj %lx (%x %x %x) (home %d) lives on %d\n", CkMyPe(), id,
+           idx.index[0], idx.index[1], idx.index[2], homePe(id), nowOnPe);
 
   auto itr = bufferedLocationRequests.find(idx);
   if (itr != bufferedLocationRequests.end()) {
@@ -2434,7 +2453,10 @@ void CkLocMgr::inform(const CkArrayIndex &idx, CmiUInt8 id, int nowOnPe) {
       int peToTell = i->first;
       DEBN(("%d Replying to buffered ID/location req to pe %d\n", CkMyPe(), peToTell));
       if (peToTell != CkMyPe())
+      {
+	CkPrintf("Calling updateLocation from (peToTell) %s\n",__FUNCTION__);
         thisProxy[peToTell].updateLocation(idx, id, nowOnPe);
+      }
     }
     bufferedLocationRequests.erase(itr);
   }
@@ -2549,6 +2571,7 @@ int CkLocMgr::deliverMsg(CkArrayMessage *msg, CkArrayID mgr, CmiUInt8 id, const 
   {
     // known location
     int destPE = whichPE(id);
+    CkPrintf("[%d] Sending to objid %lx on PE %d (hops: %d)\n", CkMyPe(), id, destPE, msg->array_hops());
     if (destPE != -1)
     {
 #if CMK_FAULT_EVAC
@@ -2559,9 +2582,10 @@ int CkLocMgr::deliverMsg(CkArrayMessage *msg, CkArrayID mgr, CmiUInt8 id, const 
       msg->array_hops()++;
       // If we are hopping more than twice, we've discovered a stale chain
       // of cache entries. Just route through home instead.
-      if (msg->array_hops() > 2 && CkMyPe() != homePe(id)) {
-        destPE = homePe(id);
-      }
+      // if (msg->array_hops() > 2 && CkMyPe() != homePe(id)) {
+      //   destPE = homePe(id);
+      // 	CkPrintf("[%d] Redirecting objid %lx msg to home PE %d (hops: %d)\n", CkMyPe(), id, destPE, msg->array_hops());
+      // }
       CkArrayManagerDeliver(destPE,msg,opts);
       return true;
     }
@@ -2715,6 +2739,7 @@ void CkLocMgr::demandCreateElement(const CkArrayIndex &idx, int chareType, int o
 
   //Find the manager and build the element
   DEBC((AA "Demand-creating element %s on pe %d\n" AB,idx2str(idx),onPe));
+  CkPrintf("Calling inform from %s\n",__FUNCTION__);
   inform(idx, getNewObjectID(idx), onPe);
   CProxy_CkArray(mgr)[onPe].demandCreateElement(idx, ctor, CkDeliver_inline);
 }
@@ -2750,6 +2775,7 @@ void CkLocMgr::multiHop(CkArrayMessage *msg)
 	else
 	{//Send a routing message letting original sender know new element location
           DEBS((AA "Sending update back to %d for element %u\n" AB, srcPe, msg->array_element_id()));
+	  CkPrintf("Calling updateLocation from %s\n",__FUNCTION__);
           thisProxy[srcPe].updateLocation(msg->array_element_id(), CkMyPe());
 	}
 }
@@ -2808,6 +2834,7 @@ void CkLocMgr::iterate(CkLocIterator &dest) {
 void CkLocMgr::pupElementsFor(PUP::er &p,CkLocRec *rec,
 		CkElementCreation_t type,bool rebuild)
 {
+    p | rec->epoch;
 	p.comment("-------- Array Location --------");
 
 	//First pup the element types
@@ -2899,6 +2926,7 @@ void CkLocMgr::emigrate(CkLocRec *rec,int toPe)
 	CK_MAGICNUMBER_CHECK
 	if (toPe==CkMyPe()) return; //You're already there!
 
+	rec->epoch++;
 #if CMK_FAULT_EVAC
 	/*
 		if the toProcessor is already marked as invalid, dont emigrate
@@ -2975,12 +3003,16 @@ void CkLocMgr::emigrate(CkLocRec *rec,int toPe)
 	duringMigration=false;
 
 	//The element now lives on another processor-- tell ourselves and its home
-	inform(idx, id, toPe);
-	informHome(idx,toPe);
+        CkPrintf("[%d] ^^^ About to inform that obj %lx (%x %x %x) (home %d) lives on %d\n", CkMyPe(), id,
+                 idx.index[0], idx.index[1], idx.index[2], homePe(id), toPe);
+
+        inform(idx, id, toPe);
+        informHome(idx, toPe, rec->epoch);
 
 #if !CMK_LBDB_ON && CMK_GLOBAL_LOCATION_UPDATE
         DEBM((AA "Global location update. idx %s " 
               "assigned to %d \n" AB,idx2str(idx),toPe));
+	CkPrintf("Calling updateLocation from (glu) %s\n",__FUNCTION__);
         thisProxy.updateLocation(id, toPe);
 #endif
 

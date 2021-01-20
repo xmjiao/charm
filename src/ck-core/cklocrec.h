@@ -29,7 +29,7 @@ private:
 #endif
 
 public:
-
+  int epoch;
   //Creation and Destruction:
   CkLocRec(CkLocMgr *mgr,bool fromMigration,bool ignoreArrival, const CkArrayIndex &idx_, CmiUInt8 id);
   void migrateMe(int toPe); //Leave this processor
