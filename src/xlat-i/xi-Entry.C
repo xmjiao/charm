@@ -1921,12 +1921,13 @@ void Entry::genCall(XStr& str, const XStr& preCall, bool redn_wrapper, bool uses
        //    str << "    if(ncpyPost[" << index << "].postLater) numPostLater++;\n";
        //    TODO:Uncomment this later
        //str << "    } else \n";
-       //str << "    CkRdmaIssueRgets(env, ((CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_MSG) ? ncpyEmApiMode::BCAST_RECV : ncpyEmApiMode::P2P_RECV), ";
-       //if(isSDAGGen)
-       //  str << "genClosure->num_rdma_fields, genClosure->num_root_node, ";
-       //else
-       //  str << "impl_num_rdma_fields, impl_num_root_node, ";
-       //str << "buffPtrs, buffSizes, impl_obj->thisIndex, ncpyPost);\n";
+       str << "    if( numPostLater == 0) // every buffer is posted\n";
+       str << "      CkRdmaIssueRgets(env, ((CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_MSG) ? ncpyEmApiMode::BCAST_RECV : ncpyEmApiMode::P2P_RECV), ";
+       if(isSDAGGen)
+         str << "genClosure->num_rdma_fields, genClosure->num_root_node, ";
+       else
+         str << "impl_num_rdma_fields, impl_num_root_node, ";
+       str << "buffPtrs, buffSizes, impl_obj->thisIndex, ncpyPost);\n";
       }
       str << "  } else if(CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_DONE_MSG) {\n";
 

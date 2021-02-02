@@ -986,7 +986,7 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootN
       int localIndex = mgr->getEltLocalIndex(arrayIndex);
       (*tagArray)[CmiMyRank()].resize(numElems * numops);
 
-      std::fill((*tagArray)[CmiMyRank()].begin(), (*tagArray)[CmiMyRank()].end(), -1);
+      std::fill((*tagArray)[CmiMyRank()].begin(), (*tagArray)[CmiMyRank()].end(), 0);
 
       for(int i=0; i < numops; i++)
         (*(tagArray))[CmiMyRank()][localIndex * numops + i] = 0; // Is already posted
