@@ -584,10 +584,9 @@ void _ncpyAckHandler(ncpyHandlerMsg *msg);
 struct CkPostedBuffer {
   void *buffer;
   int bufferSize;
-  int typeSize;
 };
 
-void CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize, int tag);
+int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize, int tag);
 
 #endif
 

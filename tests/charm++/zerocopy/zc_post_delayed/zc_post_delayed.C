@@ -47,14 +47,14 @@ class tester : public CBase_tester {
       srcBuffer2 = new int[SIZE];
       assignValuesToConstant(srcBuffer2, SIZE, CONSTANT);
 
-      arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
-      grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
-      ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+      //arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+      //grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
+      //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
 
       // Test p2p sends
-      //arrProxy[9].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
-      //grpProxy[CkNumPes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, false);
-      //ngProxy[CkNumNodes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
+      arrProxy[9].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
+      grpProxy[CkNumPes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, false);
+      ngProxy[CkNumNodes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
     }
 
     void callP2pReadyToPost() {
@@ -73,9 +73,9 @@ class tester : public CBase_tester {
         //CkExit();
 
         // Test bcast sends
-        //arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
-        //grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
-        //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+        arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+        grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
+        ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
       }
     }
 
@@ -115,7 +115,8 @@ class arr : public CBase_arr {
       CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy arr post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       CkMatchBuffer(ncpyPost, 0, tag);
 
-      thisProxy[thisIndex].readyToPost();
+      //thisProxy[thisIndex].readyToPost();
+      readyToPost();
       //if(isBcast) {
       //  CkCallback doneCb = CkCallback(CkReductionTarget(tester, callBcastReadyToPost), chareProxy);
       //  contribute(doneCb);
@@ -165,7 +166,8 @@ class grp : public CBase_grp {
       CkMatchBuffer(ncpyPost, 0, tag1);
       CkMatchBuffer(ncpyPost, 1, tag2);
 
-      thisProxy[thisIndex].readyToPost();
+      //thisProxy[thisIndex].readyToPost();
+      readyToPost();
       //if(isBcast) {
       //  thisProxy[thisIndex].readyToPost();
       //  //CkCallback doneCb = CkCallback(CkReductionTarget(tester, callBcastReadyToPost), chareProxy);
@@ -214,7 +216,8 @@ class nodegrp : public CBase_nodegrp {
       CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       CkMatchNodeBuffer(ncpyPost, 0, tag);
 
-      thisProxy[thisIndex].readyToPost();
+      //thisProxy[thisIndex].readyToPost();
+      readyToPost();
       //if(isBcast) {
       //  CkCallback doneCb = CkCallback(CkReductionTarget(tester, callBcastReadyToPost), chareProxy);
       //  contribute(doneCb);
