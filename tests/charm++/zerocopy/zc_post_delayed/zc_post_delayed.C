@@ -47,22 +47,22 @@ class tester : public CBase_tester {
       srcBuffer2 = new int[SIZE];
       assignValuesToConstant(srcBuffer2, SIZE, CONSTANT);
 
-      //arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
-      //grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
-      //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+      arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+      grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
+      ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
 
       // Test p2p sends
-      arrProxy[9].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
-      grpProxy[CkNumPes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, false);
-      ngProxy[CkNumNodes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
+      //arrProxy[9].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
+      //grpProxy[CkNumPes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, false);
+      //ngProxy[CkNumNodes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
     }
 
     void callP2pReadyToPost() {
       if(++counter == 3) {
         counter = 0;
-        arrProxy[9].readyToPost();
-        grpProxy[CkNumPes() - 1].readyToPost();
-        ngProxy[CkNumNodes() - 1].readyToPost();
+        //arrProxy[9].readyToPost();
+        //grpProxy[CkNumPes() - 1].readyToPost();
+        //ngProxy[CkNumNodes() - 1].readyToPost();
       }
     }
 
@@ -73,9 +73,9 @@ class tester : public CBase_tester {
         //CkExit();
 
         // Test bcast sends
-        arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
-        grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
-        ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+        //arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+        //grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
+        //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
       }
     }
 
@@ -108,11 +108,12 @@ class arr : public CBase_arr {
       CkPrintf("[%d][%d][%d][%d] ************* array constructor\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       destBuffer = new int[SIZE];
       assignValuesToIndex(destBuffer, SIZE); // Initial values
+      tag = 100 + thisIndex;
     }
 
     void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
       CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy arr post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
-      tag = CkPostBufferLater(ncpyPost, 0);
+      CkMatchBuffer(ncpyPost, 0, tag);
 
       thisProxy[thisIndex].readyToPost();
       //if(isBcast) {
@@ -152,15 +153,17 @@ class grp : public CBase_grp {
       CkPrintf("[%d][%d][%d][%d] ************* group constructor\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       destBuffer1 = new int[SIZE];
       assignValuesToIndex(destBuffer1, SIZE);
+      tag1 = 200 + thisIndex;
 
       destBuffer2 = new int[SIZE];
       assignValuesToIndex(destBuffer2, SIZE);
+      tag2 = 300 + thisIndex;
     }
 
     void recv_zerocopy(int *&buffer1, size_t &size1, int *&buffer2, size_t &size2, bool isBcast, CkNcpyBufferPost *ncpyPost) {
       CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy group post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
-      tag1 = CkPostBufferLater(ncpyPost, 0);
-      tag2 = CkPostBufferLater(ncpyPost, 1);
+      CkMatchBuffer(ncpyPost, 0, tag1);
+      CkMatchBuffer(ncpyPost, 1, tag2);
 
       thisProxy[thisIndex].readyToPost();
       //if(isBcast) {
@@ -201,15 +204,15 @@ class nodegrp : public CBase_nodegrp {
   int tag;
   public:
     nodegrp() {
-      tag = -20;
       CkPrintf("[%d][%d][%d][%d] ************* nodegroup constructor\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       destBuffer = new int[SIZE];
       assignValuesToIndex(destBuffer, SIZE);
+      tag = 400 + thisIndex;
     }
 
     void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
       CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
-      tag = CkPostBufferLater(ncpyPost, 0);
+      CkMatchNodeBuffer(ncpyPost, 0, tag);
 
       thisProxy[thisIndex].readyToPost();
       //if(isBcast) {
@@ -222,7 +225,7 @@ class nodegrp : public CBase_nodegrp {
 
     void readyToPost() {
       CkPrintf("[%d][%d][%d][%d] ########## readyToPost\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
-      CkPostBuffer(destBuffer, (size_t) SIZE, tag);
+      CkPostNodeBuffer(destBuffer, (size_t) SIZE, tag);
     }
 
     void recv_zerocopy(int *buffer, size_t size, bool isBcast) {

@@ -15,6 +15,7 @@ typedef std::vector<CkZeroPtr<envelope> > PtrVec;
 // Map to store object index and number of pending rdma ops
 typedef std::unordered_map<CmiUInt8, CmiUInt1> ObjNumRdmaOpsMap;
 typedef std::unordered_map<CmiUInt4, CkNcpyBufferPost> ReqTagPostMap;
+typedef std::unordered_map<CmiUInt4, CkPostedBuffer> ReqTagBufferMap;
 
 class IrrGroup;
 class TableEntry {

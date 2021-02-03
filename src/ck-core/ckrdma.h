@@ -55,6 +55,8 @@ void CkOnesidedInit();
 
 void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag);
 
+void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag);
+
 template <typename T>
 static inline constexpr size_t safe_sizeof(T * ptr)
 {
@@ -72,6 +74,14 @@ void CkPostBuffer(T *buffer, size_t size, int tag) {
   //constexpr int destSize = (std::is_same<T *, void *>::value) ? 1 : sizeof(T);
   void *destBuffer = (void *)buffer;
   CkPostBufferInternal(destBuffer, destSize, tag);
+}
+
+template <typename T>
+void CkPostNodeBuffer(T *buffer, size_t size, int tag) {
+  int destSize = (std::is_same<T, void>::value) ? size : safe_sizeof(buffer) * size;
+  //constexpr int destSize = (std::is_same<T *, void *>::value) ? 1 : sizeof(T);
+  void *destBuffer = (void *)buffer;
+  CkPostNodeBufferInternal(destBuffer, destSize, tag);
 }
 
 // Class to represent an Zerocopy buffer
@@ -523,6 +533,10 @@ struct CkNcpyBufferPost {
 
 int CkPostBufferLaterInternal(CkNcpyBufferPost *post, int index, bool nodeLevel);
 
+void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag);
+
+void CkMatchNodeBuffer(CkNcpyBufferPost *post, int index, int tag);
+
 void updatePeerCounter(void *ref);
 
 void updateTagArray(envelope *env, int localElems);
@@ -566,5 +580,14 @@ void zcPupIssueRgets(CmiUInt8 id, CkLocMgr *locMgr);
 void CkRdmaZCPupCustomHandler(void *ack);
 
 void _ncpyAckHandler(ncpyHandlerMsg *msg);
+
+struct CkPostedBuffer {
+  void *buffer;
+  int bufferSize;
+  int typeSize;
+};
+
+void CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize, int tag);
+
 #endif
 
