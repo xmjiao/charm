@@ -1469,7 +1469,7 @@ void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag) {
     }
 
     // not found, insert into ncpyPostedBufferMap
-    CkAbort("CkPostBufferInternal: not found tag! Unimplemented\n");
+    //CkAbort("CkPostBufferInternal: not found tag! Unimplemented\n");
 
   } else { // found, perform rget
     CkNcpyBufferPost post = iter->second;
@@ -1486,8 +1486,24 @@ void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag) {
   // check in posted req table
   auto iter = CksvAccess(ncpyPostedReqNodeMap).find(tag);
   if(iter == CksvAccess(ncpyPostedReqNodeMap).end()) {
+
+    auto iter2 = CksvAccess(ncpyPostedBufferNodeMap).find(tag);
+
+    if(iter2 == CksvAccess(ncpyPostedBufferNodeMap).end()) {
+      CkPostedBuffer postedBuff;
+      postedBuff.buffer = destBuffer;
+      postedBuff.bufferSize = destSize;
+
+      // not found, insert into ncpyPostedBufferMap
+      CmiLock(CksvAccess(_nodeZCBufferReqLock));
+      CksvAccess(ncpyPostedBufferNodeMap).emplace(tag, postedBuff);
+      CmiUnlock(CksvAccess(_nodeZCBufferReqLock));
+    } else {
+      CkAbort("CkPostNodeBufferInternal: tag %d already exists, use another tag!\n", tag);
+    }
+
     // not found, insert into ncpyPostedBufferMap
-    CkAbort("CkPostBufferInternal: not found tag! Unimplemented\n");
+    CkAbort("CkPostNodeBufferInternal: not found tag! Unimplemented\n");
 
   } else { // found, perform rget
     CkNcpyBufferPost post = iter->second;
@@ -1500,10 +1516,6 @@ void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag) {
 
   }
 }
-
-
-
-
 
 /*
 void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag) {
@@ -2867,7 +2879,11 @@ void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag) {
     }
   } else { // found, perform rget
 
-    CkAbort("CkMatchBuffer: not found tag! Unimplemented\n");
+    CkPostedBuffer *buff = &(iter->second);
+
+    CkPerformRget(*post, buff->buffer, buff->bufferSize, tag);
+
+    //CkAbort("CkMatchBuffer: not found tag! Unimplemented\n");
   }
 
 

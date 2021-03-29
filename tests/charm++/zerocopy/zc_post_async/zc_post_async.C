@@ -1,6 +1,6 @@
-#include "zc_post_delayed.decl.h"
+#include "zc_post_async.decl.h"
 #define SIZE 2000
-#define NUM_ELEMENTS_PER_PE 10
+#define NUM_ELEMENTS_PER_PE 1
 #define CONSTANT 188
 
 CProxy_arr arrProxy;
@@ -52,9 +52,9 @@ class tester : public CBase_tester {
       //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
 
       // Test p2p sends
-      arrProxy[9].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
+      //arrProxy[0].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
       grpProxy[CkNumPes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, false);
-      ngProxy[CkNumNodes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
+      //ngProxy[CkNumNodes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
     }
 
     void callP2pReadyToPost() {
@@ -67,15 +67,15 @@ class tester : public CBase_tester {
     }
 
     void p2pDone() {
-      if(++counter == 3) {
+      if(++counter == 1) {
         counter = 0;
-        //CkPrintf("[%d][%d][%d] All tests have successfully completed\n", CkMyPe(), CkMyNode(), CkMyRank());
-        //CkExit();
+        CkPrintf("[%d][%d][%d] All tests have successfully completed\n", CkMyPe(), CkMyNode(), CkMyRank());
+        CkExit();
 
         // Test bcast sends
-        arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
-        grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
-        ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+        //arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+        //grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
+        //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
       }
     }
 
@@ -109,6 +109,9 @@ class arr : public CBase_arr {
       destBuffer = new int[SIZE];
       assignValuesToIndex(destBuffer, SIZE); // Initial values
       tag = 100 + thisIndex;
+#if !DELAYED_POST
+      //readyToPost();
+#endif
     }
 
     void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
@@ -116,7 +119,9 @@ class arr : public CBase_arr {
       CkMatchBuffer(ncpyPost, 0, tag);
 
       //thisProxy[thisIndex].readyToPost();
+#if DELAYED_POST
       readyToPost();
+#endif
       //if(isBcast) {
       //  CkCallback doneCb = CkCallback(CkReductionTarget(tester, callBcastReadyToPost), chareProxy);
       //  contribute(doneCb);
@@ -159,6 +164,9 @@ class grp : public CBase_grp {
       destBuffer2 = new int[SIZE];
       assignValuesToIndex(destBuffer2, SIZE);
       tag2 = 300 + thisIndex;
+#if !DELAYED_POST
+      readyToPost();
+#endif
     }
 
     void recv_zerocopy(int *&buffer1, size_t &size1, int *&buffer2, size_t &size2, bool isBcast, CkNcpyBufferPost *ncpyPost) {
@@ -167,7 +175,9 @@ class grp : public CBase_grp {
       CkMatchBuffer(ncpyPost, 1, tag2);
 
       //thisProxy[thisIndex].readyToPost();
+#if DELAYED_POST
       readyToPost();
+#endif
       //if(isBcast) {
       //  thisProxy[thisIndex].readyToPost();
       //  //CkCallback doneCb = CkCallback(CkReductionTarget(tester, callBcastReadyToPost), chareProxy);
@@ -210,6 +220,9 @@ class nodegrp : public CBase_nodegrp {
       destBuffer = new int[SIZE];
       assignValuesToIndex(destBuffer, SIZE);
       tag = 400 + thisIndex;
+#if !DELAYED_POST
+      //readyToPost();
+#endif
     }
 
     void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
@@ -217,7 +230,9 @@ class nodegrp : public CBase_nodegrp {
       CkMatchNodeBuffer(ncpyPost, 0, tag);
 
       //thisProxy[thisIndex].readyToPost();
+#if DELAYED_POST
       readyToPost();
+#endif
       //if(isBcast) {
       //  CkCallback doneCb = CkCallback(CkReductionTarget(tester, callBcastReadyToPost), chareProxy);
       //  contribute(doneCb);
@@ -267,4 +282,4 @@ void verifyValuesWithIndex(int *arr, int size, int startIndex){
      CkAssert(arr[i] == i);
 }
 
-#include "zc_post_delayed.def.h"
+#include "zc_post_async.def.h"

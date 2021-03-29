@@ -1,4 +1,4 @@
-mainmodule zc_post_delayed
+mainmodule zc_post_async
 {
 
   readonly CProxy_arr arrProxy;
