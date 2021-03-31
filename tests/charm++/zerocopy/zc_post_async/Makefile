@@ -3,6 +3,7 @@
 CHARMDIR = ../../../..
 CHARMC = $(CHARMDIR)/bin/charmc $(OPTS)
 
+#all: zc_post_async_delayed
 #all: zc_post_async_delayed zc_post_async_early
 all: zc_post_async_early
 
@@ -45,13 +46,13 @@ ifeq ($(CMK_USE_CMA),1)
 endif
 
 smptest: all
-	$(call run, +p2 ./zc_post_async_delayed ++ppn 2)
-	$(call run, +p4 ./zc_post_async_delayed ++ppn 2)
+#	$(call run, +p2 ./zc_post_async_delayed ++ppn 2)
+#	$(call run, +p4 ./zc_post_async_delayed ++ppn 2)
 	$(call run, +p2 ./zc_post_async_early ++ppn 2)
 	$(call run, +p4 ./zc_post_async_early ++ppn 2)
 ifeq ($(CMK_USE_CMA),1)
-	$(call run, +p2 ./zc_post_async_delayed +noCMAForZC ++ppn 2)
-	$(call run, +p4 ./zc_post_async_delayed +noCMAForZC ++ppn 2)
+#	$(call run, +p2 ./zc_post_async_delayed +noCMAForZC ++ppn 2)
+#	$(call run, +p4 ./zc_post_async_delayed +noCMAForZC ++ppn 2)
 	$(call run, +p2 ./zc_post_async_early +noCMAForZC ++ppn 2)
 	$(call run, +p4 ./zc_post_async_early +noCMAForZC ++ppn 2)
 endif

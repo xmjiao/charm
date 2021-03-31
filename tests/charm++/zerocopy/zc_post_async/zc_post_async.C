@@ -1,6 +1,6 @@
 #include "zc_post_async.decl.h"
 #define SIZE 2000
-#define NUM_ELEMENTS_PER_PE 1
+#define NUM_ELEMENTS_PER_PE 2
 #define CONSTANT 188
 
 CProxy_arr arrProxy;
@@ -52,7 +52,7 @@ class tester : public CBase_tester {
       //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
 
       // Test p2p sends
-      //arrProxy[0].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
+      arrProxy[0].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
       grpProxy[CkNumPes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, false);
       //ngProxy[CkNumNodes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
     }
@@ -67,14 +67,14 @@ class tester : public CBase_tester {
     }
 
     void p2pDone() {
-      if(++counter == 1) {
+      if(++counter == 2) {
         counter = 0;
-        CkPrintf("[%d][%d][%d] All tests have successfully completed\n", CkMyPe(), CkMyNode(), CkMyRank());
-        CkExit();
+        //CkPrintf("[%d][%d][%d] All tests have successfully completed\n", CkMyPe(), CkMyNode(), CkMyRank());
+        //CkExit();
 
         // Test bcast sends
-        //arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
-        //grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
+        arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+        grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
         //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
       }
     }
@@ -89,7 +89,7 @@ class tester : public CBase_tester {
     }
 
     void bcastDone() {
-      if(++counter == 3) {
+      if(++counter == 2) {
         counter = 0;
         delete [] srcBuffer1;
         delete [] srcBuffer2;
@@ -110,7 +110,7 @@ class arr : public CBase_arr {
       assignValuesToIndex(destBuffer, SIZE); // Initial values
       tag = 100 + thisIndex;
 #if !DELAYED_POST
-      //readyToPost();
+      readyToPost();
 #endif
     }
 

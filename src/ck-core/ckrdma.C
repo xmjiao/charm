@@ -1261,6 +1261,8 @@ int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize, int ta
   if(CMI_IS_ZC_RECV(env)) {
     int destIndex = post.index;
 
+    CmiPrintf("[%d][%d][%d] CkPerformRget destIndex=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), destIndex);
+
     int refSize = 0;
     char *ref;
     int layerInfoSize, ncpyObjSize, extraSize;
@@ -1808,6 +1810,8 @@ bool isUnposted(std::vector<std::vector<int>> *tagArray, envelope *env, int elem
 int extractStoredBuffer(std::vector<std::vector<int>> *tagArray, envelope *env, int elemIndex, int numops, int opIndex, void *&ptr) {
   int tag = 0;
   int localIndex = -1;
+  int buffSize = -1;
+
   if(env->getMsgtype() == ArrayBcastFwdMsg) {
     CkArray *mgr = getArrayMgrFromMsg(env);
     int arraySize = mgr->getNumLocalElems();
@@ -1822,12 +1826,22 @@ int extractStoredBuffer(std::vector<std::vector<int>> *tagArray, envelope *env, 
   auto iter = CkpvAccess(ncpyPostedReqMap).find(tag);
 
   if(iter == CkpvAccess(ncpyPostedReqMap).end()) { // Entry not found in ncpyPostedReqMap
-    CkAbort("CkPostBuffer: Tag:%d not found on Pe:%d\n", tag, CmiMyPe());
+    auto iter2 = CkpvAccess(ncpyPostedBufferMap).find(tag);
+
+    if(iter2 == CkpvAccess(ncpyPostedBufferMap).end()) {
+      CkAbort("extractStoredBuffer: Tag:%d not found on Pe:%d\n", tag, CmiMyPe());
+    } else {
+      CkPostedBuffer buff = (iter2->second);
+      ptr = buff.buffer;
+      buffSize = buff.bufferSize;
+      CkpvAccess(ncpyPostedBufferMap).erase(iter2);
+    }
+  } else {
+    CkNcpyBufferPost *post = &(iter->second);
+    ptr = post->srcBuffer;
+    buffSize = post->srcSize;
+    CkpvAccess(ncpyPostedReqMap).erase(iter);
   }
-  CkNcpyBufferPost *post = &(iter->second);
-  ptr = post->srcBuffer;
-  int buffSize = post->srcSize;
-  CkpvAccess(ncpyPostedReqMap).erase(iter);
   return buffSize;
 }
 
@@ -2881,7 +2895,9 @@ void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag) {
 
     CkPostedBuffer *buff = &(iter->second);
 
-    CkPerformRget(*post, buff->buffer, buff->bufferSize, tag);
+    post[index].tag = tag;
+
+    CkPerformRget((post[index]), buff->buffer, buff->bufferSize, tag);
 
     //CkAbort("CkMatchBuffer: not found tag! Unimplemented\n");
   }
@@ -2892,11 +2908,9 @@ void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag) {
 
 
   for(auto iter = CkpvAccess(ncpyPostedReqMap).begin(); iter != CkpvAccess(ncpyPostedReqMap).end(); ++iter) {
-
     CkNcpyBufferPost *post2 = &(iter->second);
-
-      CmiPrintf("[%d][%d][%d] tag = %d, post.srcBuffer=%p, post.srcSize=%d \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), iter->first, post2->srcBuffer, post2->srcSize);
-   }
+    CmiPrintf("[%d][%d][%d] tag = %d, post.srcBuffer=%p, post.srcSize=%d \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), iter->first, post2->srcBuffer, post2->srcSize);
+  }
 }
 
 void CkMatchNodeBuffer(CkNcpyBufferPost *post, int index, int tag) {
