@@ -1391,6 +1391,7 @@ void _initCharm(int unused_argc, char **argv)
 		CksvAccess(_nodeBocInitVec) = new PtrVec();
 		CksvAccess(_nodeZCPendingLock) = CmiCreateLock();
 		CksvAccess(_nodeZCPostReqLock) = CmiCreateLock();
+		CksvAccess( _nodeZCBufferReqLock) = CmiCreateLock();
 		CksvAccess(postNodeTag) = -1;
 
 		CmiSetNcpyAckSize(sizeof(CkCallback));

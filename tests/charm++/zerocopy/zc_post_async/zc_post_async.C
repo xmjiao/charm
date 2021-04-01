@@ -50,11 +50,18 @@ class tester : public CBase_tester {
       //arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
       //grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
       //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+      //
+      int lastArrEleIndex = CkNumPes() * NUM_ELEMENTS_PER_PE - 1;
 
       // Test p2p sends
-      arrProxy[0].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
+      arrProxy[lastArrEleIndex].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
       grpProxy[CkNumPes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, false);
-      //ngProxy[CkNumNodes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
+      ngProxy[CkNumNodes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
+
+        //arrProxy.postEarly();
+        //grpProxy.postEarly();
+        //ngProxy.postEarly();
+
     }
 
     void callP2pReadyToPost() {
@@ -67,15 +74,30 @@ class tester : public CBase_tester {
     }
 
     void p2pDone() {
-      if(++counter == 2) {
+      if(++counter == 3) {
         counter = 0;
         //CkPrintf("[%d][%d][%d] All tests have successfully completed\n", CkMyPe(), CkMyNode(), CkMyRank());
         //CkExit();
-
+#if DELAYED_POST
         // Test bcast sends
         arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
         grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
-        //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+        ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+#else
+        arrProxy.postEarly();
+        grpProxy.postEarly();
+        ngProxy.postEarly();
+#endif
+
+      }
+    }
+
+    void bcastPostDone() {
+      if(++counter == 3) {
+        counter = 0;
+        arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
+        grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, true);
+        ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
       }
     }
 
@@ -89,7 +111,7 @@ class tester : public CBase_tester {
     }
 
     void bcastDone() {
-      if(++counter == 2) {
+      if(++counter == 3) {
         counter = 0;
         delete [] srcBuffer1;
         delete [] srcBuffer2;
@@ -110,7 +132,8 @@ class arr : public CBase_arr {
       assignValuesToIndex(destBuffer, SIZE); // Initial values
       tag = 100 + thisIndex;
 #if !DELAYED_POST
-      readyToPost();
+      if(thisIndex == CkNumPes() * NUM_ELEMENTS_PER_PE - 1)
+        readyToPost();
 #endif
     }
 
@@ -128,6 +151,12 @@ class arr : public CBase_arr {
       //} else {
       //  chareProxy.callP2pReadyToPost();
       //}
+    }
+
+    void postEarly() {
+      readyToPost();
+      CkCallback doneCb = CkCallback(CkReductionTarget(tester, bcastPostDone), chareProxy);
+      contribute(doneCb);
     }
 
     void readyToPost() {
@@ -165,7 +194,8 @@ class grp : public CBase_grp {
       assignValuesToIndex(destBuffer2, SIZE);
       tag2 = 300 + thisIndex;
 #if !DELAYED_POST
-      readyToPost();
+      if(thisIndex == CkNumPes() - 1)
+        readyToPost();
 #endif
     }
 
@@ -185,6 +215,12 @@ class grp : public CBase_grp {
       //} else {
       //  chareProxy.callP2pReadyToPost();
       //}
+    }
+
+    void postEarly() {
+      readyToPost();
+      CkCallback doneCb = CkCallback(CkReductionTarget(tester, bcastPostDone), chareProxy);
+      contribute(doneCb);
     }
 
     void readyToPost() {
@@ -221,7 +257,8 @@ class nodegrp : public CBase_nodegrp {
       assignValuesToIndex(destBuffer, SIZE);
       tag = 400 + thisIndex;
 #if !DELAYED_POST
-      //readyToPost();
+      if(thisIndex == CkNumNodes() - 1)
+        readyToPost();
 #endif
     }
 
@@ -244,6 +281,12 @@ class nodegrp : public CBase_nodegrp {
     void readyToPost() {
       CkPrintf("[%d][%d][%d][%d] ########## readyToPost\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       CkPostNodeBuffer(destBuffer, (size_t) SIZE, tag);
+    }
+
+    void postEarly() {
+      readyToPost();
+      CkCallback doneCb = CkCallback(CkReductionTarget(tester, bcastPostDone), chareProxy);
+      contribute(doneCb);
     }
 
     void recv_zerocopy(int *buffer, size_t size, bool isBcast) {

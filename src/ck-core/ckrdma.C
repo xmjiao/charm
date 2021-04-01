@@ -1505,17 +1505,16 @@ void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag) {
     }
 
     // not found, insert into ncpyPostedBufferMap
-    CkAbort("CkPostNodeBufferInternal: not found tag! Unimplemented\n");
+    //CkAbort("CkPostNodeBufferInternal: not found tag! Unimplemented\n");
 
   } else { // found, perform rget
     CkNcpyBufferPost post = iter->second;
 
-    CkPerformRget(post, destBuffer, destSize, tag);
-    CmiLock(CksvAccess(_nodeZCPostReqLock));
-    CksvAccess(ncpyPostedReqNodeMap).erase(iter);
-    CmiUnlock(CksvAccess(_nodeZCPostReqLock));
-
-
+    if(CkPerformRget(post, destBuffer, destSize, tag)) {
+      CmiLock(CksvAccess(_nodeZCPostReqLock));
+      CksvAccess(ncpyPostedReqNodeMap).erase(iter);
+      CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+    }
   }
 }
 
@@ -2897,7 +2896,9 @@ void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag) {
 
     post[index].tag = tag;
 
-    CkPerformRget((post[index]), buff->buffer, buff->bufferSize, tag);
+    if(CkPerformRget((post[index]), buff->buffer, buff->bufferSize, tag)) {
+      CkpvAccess(ncpyPostedBufferMap).erase(iter);
+    }
 
     //CkAbort("CkMatchBuffer: not found tag! Unimplemented\n");
   }
@@ -2921,14 +2922,29 @@ void CkMatchNodeBuffer(CkNcpyBufferPost *post, int index, int tag) {
   // check in posted buffer table
   auto iter = CksvAccess(ncpyPostedBufferNodeMap).find(tag);
   if(iter == CksvAccess(ncpyPostedBufferNodeMap).end()) {
-    // not found, insert into ncpyPostedReqMap
-    post[index].tag = tag;
-    CmiLock(CksvAccess(_nodeZCPostReqLock));
-    CksvAccess(ncpyPostedReqNodeMap).emplace(post[index].tag, post[index]);
-    CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+
+    auto iter2 = CksvAccess(ncpyPostedReqNodeMap).find(tag);
+
+    if(iter2 == CksvAccess(ncpyPostedReqNodeMap).end()) {
+      // not found, insert into ncpyPostedReqNodeMap
+      post[index].tag = tag;
+      CmiLock(CksvAccess(_nodeZCPostReqLock));
+      CksvAccess(ncpyPostedReqNodeMap).emplace(post[index].tag, post[index]);
+      CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+    } else {
+      CkAbort("CkMatchNodeBuffer: tag %d already exists, use another tag!\n", tag);
+    }
   } else { // found, perform rget
 
-    CkAbort("CkMatchBuffer: not found tag! Unimplemented\n");
+    CkPostedBuffer *buff = &(iter->second);
+    post[index].tag = tag;
+    if(CkPerformRget((post[index]), buff->buffer, buff->bufferSize, tag)) {
+      CmiLock(CksvAccess(_nodeZCBufferReqLock));
+      CksvAccess(ncpyPostedBufferNodeMap).erase(iter);
+      CmiUnlock(CksvAccess(_nodeZCBufferReqLock));
+    }
+
+    //CkAbort("CkMatchBuffer: not found tag! Unimplemented\n");
   }
 }
 
