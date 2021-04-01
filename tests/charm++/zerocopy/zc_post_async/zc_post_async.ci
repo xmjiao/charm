@@ -14,8 +14,6 @@ mainmodule zc_post_async
   chare tester {
     entry tester();
     entry void p2pDone();
-    entry void callP2pReadyToPost();
-    entry [reductiontarget] void callBcastReadyToPost();
     entry [reductiontarget] void bcastPostDone();
     entry [reductiontarget] void bcastDone();
   };
@@ -23,21 +21,21 @@ mainmodule zc_post_async
   array [1D] arr{
     entry arr();
     entry void readyToPost();
-    entry void postEarly();
+    entry void postBuffers();
     entry void recv_zerocopy(nocopypost int buffer[size], size_t size, bool isBcast);
   };
 
   group grp{
     entry grp();
     entry void readyToPost();
-    entry void postEarly();
+    entry void postBuffers();
     entry void recv_zerocopy(nocopypost int buffer1[size1], size_t size1, nocopypost int buffer2[size2], size_t size2, bool isBcast);
   };
 
   nodegroup nodegrp{
     entry nodegrp();
     entry void readyToPost();
-    entry void postEarly();
+    entry void postBuffers();
     entry void recv_zerocopy(nocopypost int buffer[size], size_t size, bool isBcast);
   };
 }
