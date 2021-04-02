@@ -1942,17 +1942,20 @@ void Entry::genCall(XStr& str, const XStr& preCall, bool redn_wrapper, bool uses
       else
         str << " impl_num_rdma_fields)) {\n";
       str << "   CkRdmaPostLaterPreprocess(env, ((CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_MSG) ? ncpyEmApiMode::BCAST_RECV : ncpyEmApiMode::P2P_RECV), " << numRdmaRecvParams << ", ncpyPost, impl_obj->thisIndex, peerAckInfo);\n";
-      for (int index = 0; index < numRdmaRecvParams; index++)
-        str << "    if(ncpyPost[" << index << "].postLater) numPostLater++;\n";
-      param->copyFromPostedPtrs(str, isSDAGGen);
+      param->setupPostedPtrs(str, isSDAGGen);
 
       genRegularCall(str, preCall, redn_wrapper, usesImplBuf, true);
 
+      for (int index = 0; index < numRdmaRecvParams; index++)
+        str << "    if(ncpyPost[" << index << "].postLater) numPostLater++;\n";
+
+      param->copyFromPostedPtrs(str, isSDAGGen);
       //TODO: Uncomment this later
-      //str << " if(numPostLater == 0) {\n";
-      //genRegularCall(str, preCall, redn_wrapper, usesImplBuf, false);
-      //str << "    updatePeerCounter(peerAckInfo);\n";
-      ////str << "      } else {\n";
+      str << " if(numPostLater == 0) {\n";
+      genRegularCall(str, preCall, redn_wrapper, usesImplBuf, false);
+      str << "    updatePeerCounter(peerAckInfo);\n";
+      str << " }\n";
+      //str << "      } else {\n";
       //str << "   } else\n";
       //str << "   CkRdmaPostLaterPreprocess(env, ((CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_MSG) ? ncpyEmApiMode::BCAST_RECV : ncpyEmApiMode::P2P_RECV), " << numRdmaRecvParams << ", ncpyPost, impl_obj->thisIndex, peerAckInfo);\n";
       //str << "      }\n";

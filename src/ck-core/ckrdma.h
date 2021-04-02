@@ -57,6 +57,8 @@ void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag);
 
 void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag);
 
+void CkPostAndMatchBufferInternal(void *destBuffer, size_t destSize, CkNcpyBufferPost *post, int index);
+
 template <typename T>
 static inline constexpr size_t safe_sizeof(T * ptr)
 {
@@ -82,6 +84,14 @@ void CkPostNodeBuffer(T *buffer, size_t size, int tag) {
   //constexpr int destSize = (std::is_same<T *, void *>::value) ? 1 : sizeof(T);
   void *destBuffer = (void *)buffer;
   CkPostNodeBufferInternal(destBuffer, destSize, tag);
+}
+
+template <typename T>
+void CkPostAndMatchBuffer(T *buffer, size_t size, CkNcpyBufferPost *post, int index) {
+  int destSize = (std::is_same<T, void>::value) ? size : safe_sizeof(buffer) * size;
+  //constexpr int destSize = (std::is_same<T *, void *>::value) ? 1 : sizeof(T);
+  void *destBuffer = (void *)buffer;
+  CkPostAndMatchBufferInternal(destBuffer, destSize, post, index);
 }
 
 // Class to represent an Zerocopy buffer

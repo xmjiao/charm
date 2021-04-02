@@ -1,6 +1,6 @@
 #include "zc_post_async.decl.h"
 #define SIZE 2000
-#define NUM_ELEMENTS_PER_PE 10
+#define NUM_ELEMENTS_PER_PE 2
 #define CONSTANT 188
 
 CProxy_arr arrProxy;
@@ -49,6 +49,7 @@ class tester : public CBase_tester {
 
       int lastArrEleIndex = CkNumPes() * NUM_ELEMENTS_PER_PE - 1;
 
+      //arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, true);
       // Test p2p sends
       arrProxy[lastArrEleIndex].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, false);
       grpProxy[CkNumPes() - 1].recv_zerocopy(CkSendBuffer(srcBuffer1), SIZE, CkSendBuffer(srcBuffer2), SIZE, false);
@@ -59,6 +60,7 @@ class tester : public CBase_tester {
       if(++counter == 3) { // All p2p sends are complete
         counter = 0;
 
+        CkPrintf("[%d][%d][%d] All p2p tests have successfully completed\n", CkMyPe(), CkMyNode(), CkMyRank());
         // Test bcast sends
 #if DELAYED_POST
         // For delayed posting, buffers are posted after the execution of the Post EMs
@@ -88,7 +90,7 @@ class tester : public CBase_tester {
         counter = 0;
         delete [] srcBuffer1;
         delete [] srcBuffer2;
-        CkPrintf("[%d][%d][%d] All tests have successfully completed\n", CkMyPe(), CkMyNode(), CkMyRank());
+        CkPrintf("[%d][%d][%d] All bcasts tests have successfully completed\n", CkMyPe(), CkMyNode(), CkMyRank());
         CkExit();
       }
     }
@@ -113,10 +115,13 @@ class arr : public CBase_arr {
     void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
       //CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy arr post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       CkMatchBuffer(ncpyPost, 0, tag);
+      //buffer = destBuffer;
+      //size = SIZE;
 
 #if DELAYED_POST
       // Post buffer now for delayed posting
-      readyToPost();
+      thisProxy[thisIndex].readyToPost();
+      //readyToPost();
 #endif
     }
 
@@ -176,7 +181,8 @@ class grp : public CBase_grp {
 
 #if DELAYED_POST
       // Post buffer now for delayed posting
-      readyToPost();
+      thisProxy[thisIndex].readyToPost();
+      //readyToPost();
 #endif
     }
 
@@ -232,7 +238,8 @@ class nodegrp : public CBase_nodegrp {
 
 #if DELAYED_POST
       // Post buffer now for delayed posting
-      readyToPost();
+      thisProxy[thisIndex].readyToPost();
+      //readyToPost();
 #endif
     }
 
