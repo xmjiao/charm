@@ -90,6 +90,25 @@ void MetisLB::work(LDStats* stats)
   xadj[i] = edgeNum;
   CkAssert(edgeNum == numEdges);
 
+  if (_lb_args.debug() >= 1)
+  {
+    CkPrintf("[%d] MetisLB: %d edges, %d vertices\n", CkMyPe(), numEdges, numVertices);
+
+    if (_lb_args.debug() >= 2)
+    {
+      for (int i = 0; i < 10 && i < numVertices; i++)
+      {
+        const auto elementEdges = xadj[i + 1] - xadj[i];
+        size_t bytes = 0;
+        for (int j = xadj[i]; j < xadj[i + 1]; j++)
+        {
+          bytes += adjwgt[j];
+        }
+        CkPrintf("[%d] MetisLB: Object %d communicates %d bytes\n", CkMyPe(), i, bytes);
+      }
+    }
+  }
+
   idx_t edgecut;		// number of edges cut by the partitioning
   idx_t *pemap;
 
