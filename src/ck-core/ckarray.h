@@ -754,8 +754,6 @@ public:
   void flushStates();
   void forwardZCMsgToOtherElems(envelope *env);
   void forwardZCMsgToSpecificElem(envelope *env, CkMigratable *elem);
-  void forwardZCMsgToZerothElem(envelope *env);
-
 
         static bool isIrreducible() { return true; }
 };

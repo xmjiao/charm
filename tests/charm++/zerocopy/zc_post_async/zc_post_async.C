@@ -61,7 +61,6 @@ class tester : public CBase_tester {
         counter = 0;
 
         CkPrintf("[%d][%d][%d] All p2p tests have successfully completed\n", CkMyPe(), CkMyNode(), CkMyRank());
-        //CkExit();
         // Test bcast sends
 #if DELAYED_POST
         // For delayed posting, buffers are posted after the execution of the Post EMs

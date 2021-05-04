@@ -610,10 +610,7 @@ void ParamList::beginUnmarshall(XStr& str) {
           str << "  CkNcpyBufferPost ncpyPost[" << entry->numRdmaRecvParams << "];\n";
           str << "    int numPostLater=0;\n";
           for (int index = 0; index < entry->numRdmaRecvParams; index++) {
-            str << "  ncpyPost[" << index << "].regMode = CK_BUFFER_REG;\n";
-            str << "  ncpyPost[" << index << "].deregMode = CK_BUFFER_DEREG;\n";
-            str << "  ncpyPost[" << index << "].index = " << index << ";\n";
-            str << "  ncpyPost[" << index << "].postLater = false;\n";
+            str << "  initPostStruct(ncpyPost, " << index << " );\n";
           }
         }
       }
@@ -700,23 +697,10 @@ void Parameter::setupPostedPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool de
 
     if (hostPath) {
       if (genRdma) {
-        str << "   {\n";
-        str << "      ncpyPost[" << count << "].srcBuffer = (void *)";
+        str << "      setPostStruct(ncpyPost, " << count++ << ",";
         if(isSDAGGen) str << "genClosure->";
-        str << "ncpyBuffer_" << name << ".ptr;\n";
-
-        str << "      ncpyPost[" << count  << "].srcSize = ";
-        if(isSDAGGen) str << "genClosure->";
-        str << "ncpyBuffer_" << name << ".cnt;\n";
-
-        str << "      ncpyPost[" << count  << "].tagArray = ";
-        if(isSDAGGen) str << "genClosure->";
-        str << "ncpyBuffer_" << name << ".tagArray;\n";
-
-        str << "      ncpyPost[" << count  << "].opIndex = " << count << ";\n";
-        str << "      ncpyPost[" << count++ << "].arrayIndex = myIndex;\n";
-        str << "    }\n";
-        //str << "  }\n";
+        str << "ncpyBuffer_" << name << ",";
+        str << "myIndex);\n";
       } else {
         str << "  if(ncpyPost[" << count << "].postLater == false) { \n";
         // Error checking if posted buffer is larger than the source buffer

@@ -1546,7 +1546,6 @@ void CkArray::recvBroadcast(CkMessage* m) {
     // All operations done, already consumed by other array elements, now
     // deliver to the first element
 
-    CmiPrintf("[%d][%d][%d] Received an ALL_DONE_MSG\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
     bool doFree = true; // free it since all ops are done
     broadcaster->deliver(msg, (ArrayElement*)localElemVec[0], doFree);
   } else if (zc_msgtype == CMK_ZC_BCAST_RECV_MSG && len > 0 ) {
@@ -1566,13 +1565,11 @@ void CkArray::recvBroadcast(CkMessage* m) {
 #if CMK_CHARM4PY
     broadcaster->deliver(msg, localElemVec, thisgroup.idx, stableLocations);
 #else
-//#if CMK_ONESIDED_IMPL
       // Do not free if CMK_ZC_BCAST_RECV_DONE_MSG, since it'll be freed by the
       // first element during CMK_ZC_BCAST_ALL_DONE_MSG
       if (zc_msgtype == CMK_ZC_BCAST_RECV_DONE_MSG) {
         updateTagArray(env, localElemVec.size());
       }
-//#endif
     for (unsigned int i = 0; i < len; ++i) {
       bool doFree = false;
       if (stableLocations && i == len-1) doFree = true;
@@ -1608,15 +1605,7 @@ void CkArray::forwardZCMsgToOtherElems(envelope *env) {
 
 void CkArray::forwardZCMsgToSpecificElem(envelope *env, CkMigratable *elem) {
   bool doFree = false;
-  //int msgType = CMI_ZC_MSGTYPE(env);
-  //CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_MY_RECV_DONE_MSG;
   broadcaster->deliverAlreadyDelivered((CkArrayMessage *)EnvToUsr(env), (ArrayElement*)elem, doFree);
-  //CMI_ZC_MSGTYPE(env) = msgType;
-}
-
-void CkArray::forwardZCMsgToZerothElem(envelope *env) {
-  bool doFree = true;
-  broadcaster->deliverAlreadyDelivered((CkArrayMessage *)EnvToUsr(env), (ArrayElement*)localElemVec[0], doFree);
 }
 
 void CkArray::flushStates() {

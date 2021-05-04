@@ -1366,7 +1366,6 @@ void _initCharm(int unused_argc, char **argv)
 		CmiSetNcpyAckSize(sizeof(CkCallback));
 	}
 
-	CkOnesidedInit();
 
 	CkCallbackInit();
 	

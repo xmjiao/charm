@@ -51,13 +51,10 @@ struct NcpyPostEmInfo {
 
 class CkNcpyBufferPost;
 
-void CkOnesidedInit();
-
 void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag);
 
 void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag);
 
-void CkPostAndMatchBufferInternal(void *destBuffer, size_t destSize, CkNcpyBufferPost *post, int index);
 
 template <typename T>
 static inline constexpr size_t safe_sizeof(T * ptr)
@@ -86,13 +83,6 @@ void CkPostNodeBuffer(T *buffer, size_t size, int tag) {
   CkPostNodeBufferInternal(destBuffer, destSize, tag);
 }
 
-template <typename T>
-void CkPostAndMatchBuffer(T *buffer, size_t size, CkNcpyBufferPost *post, int index) {
-  int destSize = (std::is_same<T, void>::value) ? size : safe_sizeof(buffer) * size;
-  //constexpr int destSize = (std::is_same<T *, void *>::value) ? 1 : sizeof(T);
-  void *destBuffer = (void *)buffer;
-  CkPostAndMatchBufferInternal(destBuffer, destSize, post, index);
-}
 
 // Class to represent an Zerocopy buffer
 // CkSendBuffer(....) passed by the user internally translates to a CkNcpyBuffer
@@ -100,7 +90,6 @@ class CkNcpyBuffer : public CmiNcpyBuffer {
 
   public:
 
-  //int *tagArray;
   std::vector< std::vector<int>> *tagArray;
 
   NcpyBcastRecvPeerAckInfo *peerAckInfo;
@@ -196,6 +185,7 @@ static inline CkNcpyBuffer CkSendBuffer(const void *ptr_, CkCallback &cb_, unsig
 static inline CkNcpyBuffer CkSendBuffer(const void *ptr_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
   return CkNcpyBuffer(ptr_, 0, regMode_, deregMode_);
 }
+
 
 // NOTE: Inside CkRdmaIssueRgets, a large message allocation is made consisting of space
 // for the destination or receiver buffers and some additional information required for processing
@@ -597,7 +587,11 @@ struct CkPostedBuffer {
   int bufferSize;
 };
 
-int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize, int tag);
+int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize);
+
+void setPostStruct(CkNcpyBufferPost *ncpyPost, int index, CkNcpyBuffer &buffObj, CmiUInt8 elemIndex);
+
+void initPostStruct(CkNcpyBufferPost *ncpyPost, int index);
 
 #endif
 
