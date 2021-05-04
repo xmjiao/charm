@@ -101,7 +101,7 @@ class arr : public CBase_arr {
   int tag;
   public:
     arr() {
-      CkPrintf("[%d][%d][%d][%d] ************* array constructor\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
+      //CkPrintf("[%d][%d][%d][%d] ************* array constructor\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       destBuffer = new int[SIZE];
       assignValuesToIndex(destBuffer, SIZE); // Initial values
       tag = 100 + thisIndex;
@@ -113,7 +113,7 @@ class arr : public CBase_arr {
     }
 
     void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
-      CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy arr post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
+      //CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy arr post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       CkMatchBuffer(ncpyPost, 0, tag);
       //buffer = destBuffer;
       //size = SIZE;
@@ -134,12 +134,12 @@ class arr : public CBase_arr {
     }
 
     void readyToPost() {
-      CkPrintf("[%d][%d][%d][%d] ########## readyToPost\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
+      //CkPrintf("[%d][%d][%d][%d] ########## readyToPost\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       CkPostBuffer(destBuffer, (size_t) SIZE, tag);
     }
 
     void recv_zerocopy(int *buffer, size_t size, bool isBcast) {
-      CkPrintf("[%d][%d][%d][%d] ^^^^^^^^^^^ recv_zerocopy arr regular em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
+      //CkPrintf("[%d][%d][%d][%d] ^^^^^^^^^^^ recv_zerocopy arr regular em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
       verifyValuesWithConstant(destBuffer, SIZE, CONSTANT);
 
       if(isBcast) {

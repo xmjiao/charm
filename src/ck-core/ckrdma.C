@@ -2132,7 +2132,7 @@ void updateTagArray(envelope *env, int localElems) {
     w.peerAckInfo->incNumElems(localElems);
     w.peerAckInfo->decNumPeers();
 
-    CmiPrintf("[%d][%d][%d] updateTagArray and numPeers is %d, localElems is %d and numElems is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), w.peerAckInfo->getNumPeers(), localElems, w.peerAckInfo->getNumElems());
+    //CmiPrintf("[%d][%d][%d] updateTagArray and numPeers is %d, localElems is %d and numElems is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), w.peerAckInfo->getNumPeers(), localElems, w.peerAckInfo->getNumElems());
     break;
   }
 }
@@ -2189,7 +2189,7 @@ int extractStoredBuffer(std::vector<std::vector<int>> *tagArray, envelope *env, 
     int arraySize = mgr->getNumLocalElems();
     localIndex = mgr->getEltLocalIndex(elemIndex);
 
-    CmiPrintf("[%d][%d][%d] elemIndex is %d and localIndex is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), elemIndex, localIndex);
+    //CmiPrintf("[%d][%d][%d] elemIndex is %d and localIndex is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), elemIndex, localIndex);
     tag = (*tagArray)[CmiMyRank()][localIndex * numops + opIndex];
   } else if(env->getMsgtype() == ForBocMsg) {
     localIndex = CmiMyRank();
@@ -2449,7 +2449,7 @@ int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize) {
   if(CMI_IS_ZC_RECV(env)) {
     int destIndex = post.index;
 
-    CmiPrintf("[%d][%d][%d] CkPerformRget destIndex=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), destIndex);
+    //CmiPrintf("[%d][%d][%d] CkPerformRget destIndex=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), destIndex);
 
     int refSize = 0;
     char *ref;
