@@ -35,26 +35,11 @@ struct NcpyBcastRecvPeerAckInfo;
 // BCAST_RECV mode is used for EM BCAST Send API
 enum class ncpyEmApiMode : char { P2P_SEND, BCAST_SEND, P2P_RECV, BCAST_RECV };
 
-struct NcpyPostEmInfo {
-  // envelope of the received message
-  envelope *env;
-
-  // rootNode;
-  int rootNode;
-
-  // mode
-  ncpyEmApiMode emMode;
-
-  // num rdma ops
-  int numops;
-};
-
 class CkNcpyBufferPost;
 
 void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag);
 
 void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag);
-
 
 template <typename T>
 static inline constexpr size_t safe_sizeof(T * ptr)
@@ -70,7 +55,6 @@ inline constexpr size_t safe_sizeof(void * ptr)
 template <typename T>
 void CkPostBuffer(T *buffer, size_t size, int tag) {
   int destSize = (std::is_same<T, void>::value) ? size : safe_sizeof(buffer) * size;
-  //constexpr int destSize = (std::is_same<T *, void *>::value) ? 1 : sizeof(T);
   void *destBuffer = (void *)buffer;
   CkPostBufferInternal(destBuffer, destSize, tag);
 }
@@ -78,11 +62,9 @@ void CkPostBuffer(T *buffer, size_t size, int tag) {
 template <typename T>
 void CkPostNodeBuffer(T *buffer, size_t size, int tag) {
   int destSize = (std::is_same<T, void>::value) ? size : safe_sizeof(buffer) * size;
-  //constexpr int destSize = (std::is_same<T *, void *>::value) ? 1 : sizeof(T);
   void *destBuffer = (void *)buffer;
   CkPostNodeBufferInternal(destBuffer, destSize, tag);
 }
-
 
 // Class to represent an Zerocopy buffer
 // CkSendBuffer(....) passed by the user internally translates to a CkNcpyBuffer
@@ -206,7 +188,7 @@ struct NcpyEmInfo{
   void *forwardMsg; // used for the ncpy broadcast api
 
   CmiUInt8 arrayId;
-  //int *tagArray;
+
   std::vector< std::vector<int>> *tagArray;
 
   NcpyBcastRecvPeerAckInfo *peerAckInfo;
@@ -267,7 +249,6 @@ struct NcpyBcastRecvPeerAckInfo{
 #else
   int numElems;
 #endif
-
 
   void *bcastAckInfo;
   void *msg;
@@ -518,18 +499,15 @@ struct CkNcpyBufferPost {
   // NcpyEmInfo
   NcpyEmInfo *ncpyEmInfo;
 
-//#if !CMK_ONESIDED_IMPL
   void *srcBuffer;
+
   size_t srcSize;
 
   int opIndex;
-  //int arrayIndex;
+
   CmiUInt8 arrayIndex;
 
-  //int *tagArray;
-  //vector<vector<int>> *tagArray;
   std::vector< std::vector<int>> *tagArray;
-//#endif
 };
 
 void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag);
@@ -542,15 +520,9 @@ void updateTagArray(envelope *env, int localElems);
 
 void setPosted(std::vector<std::vector<int>> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops, int opIndex);
 
-//bool isUnposted(std::vector<std::vector<int>> *tagArray, int arraySize, int localIndex, int numops);
 bool isUnposted(std::vector<std::vector<int>> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops);
-//bool isUnposted(int *tagArray, int arraySize, int localIndex, int numops);
-//
-int extractStoredBuffer(std::vector<std::vector<int>> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops, int opIndex, void *&ptr);
 
-//int extractStoredBuffer(std::vector<std::vector<int>> *tagArray, envelope *env, int localIndex, int numops, int opIndex, void *&ptr);
-//int extractStoredBuffer(std::vector<std::vector<int>> *tagArray, int arraySize, int numops, int arrayIndex, int count, void *&ptr);
-//int extractStoredBuffer(int *tagArray, int arraySize, int numops, int arrayIndex, int count, void *&ptr);
+int extractStoredBuffer(std::vector<std::vector<int>> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops, int opIndex, void *&ptr);
 
 // Function declaration for EM Ncpy Ack handler initialization
 void initEMNcpyAckHandler(void);
