@@ -1620,7 +1620,7 @@ void CkRdmaEMBcastPostAckHandler(void *msg) {
     NcpyBcastInterimAckInfo *bcastAckInfo = allocateInterimNodeAckObj(env, NULL, ncpyEmInfo->pe);
     handleMsgOnInterimPostCompletionForRecvBcast(env, bcastAckInfo, ncpyEmInfo->pe);
 
-    CmiFree(ncpyEmInfo); // Allocated in CkRdmaIssueRgets
+    //CmiFree(ncpyEmInfo); // Allocated in CkRdmaIssueRgets
 
   } else {
     CmiAbort("parent node reaching CkRdmaEMBcastPostAckHandler\n");
@@ -2139,6 +2139,7 @@ void updateTagArray(envelope *env, int localElems) {
 
 void updatePeerCounter(void *ref) {
   NcpyBcastRecvPeerAckInfo *peerAckInfo = (NcpyBcastRecvPeerAckInfo *)ref;
+  CmiPrintf("[%d][%d][%d] updatePeerCounter numElems=%d, numPeers=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), peerAckInfo->getNumElems(), peerAckInfo->getNumPeers());
   if(peerAckInfo->decNumElems() - 1 == 0 && peerAckInfo->getNumPeers() == 0) {
     envelope *env = (envelope *)peerAckInfo->msg;
     CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
@@ -2341,7 +2342,6 @@ void CkMatchNodeBuffer(CkNcpyBufferPost *post, int index, int tag) {
 
 void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, CkNcpyBufferPost *post) {
 
-  //CmiPrintf("[%d][%d][%d] CkRdmaPostLaterPreprocess env=%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env);
   int refSize = 0;
   char *ref = NULL;
   int layerInfoSize, ncpyObjSize, extraSize;
@@ -2349,6 +2349,20 @@ void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, 
   CkNcpyMode ncpyMode = findTransferMode(getSrcPe(env), CkMyPe());
 
   layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
+
+  CmiPrintf("[%d][%d][%d] CkRdmaPostLaterPreprocess env=%p, size of ncpyBcastRecvPeerAckInfo=%d, size of vec<vec> = %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, sizeof(NcpyBcastRecvPeerAckInfo), sizeof(std::vector<std::vector<int>>));
+  if(ncpyMode == CkNcpyMode::RDMA) {
+    preprocessRdmaCaseForRgets(layerInfoSize, ncpyObjSize, extraSize, refSize, numops);
+    //ref = (char *)CmiAlloc(refSize + sizeof(NcpyBcastRecvPeerAckInfo) + sizeof(std::vector<std::vector<int>>));
+    ref = (char *)CmiAlloc(refSize + sizeof(NcpyBcastRecvPeerAckInfo));
+    setNcpyEmInfo(ref, env, numops, NULL, emMode);
+
+  } else {
+    //ref = (char *)CmiAlloc(sizeof(NcpyEmInfo) + sizeof(NcpyBcastRecvPeerAckInfo) + sizeof(std::vector<std::vector<int>>));
+    ref = (char *)CmiAlloc(sizeof(NcpyEmInfo) + sizeof(NcpyBcastRecvPeerAckInfo));
+    refSize = sizeof(NcpyEmInfo);
+    setNcpyEmInfo(ref, env, numops, NULL, emMode);
+  }
 
   std::vector< std::vector<int>> *tagArray;
   //int *tagArray = NULL;
@@ -2362,6 +2376,8 @@ void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, 
     //if(numElems > 1) {
       //tagArray = new int[CmiMyNodeSize() * numElems * numops];
       tagArray = new std::vector< std::vector<int> >;
+      //
+      //tagArray = (std::vector< std::vector<int>> *)((char *)ref + refSize + sizeof(NcpyBcastRecvPeerAckInfo));
       //int[CmiMyNodeSize() * numElems * numops];
 
       //memset(tagArray, -1, CmiMyNodeSize() * numElems * numops * sizeof(int));
@@ -2371,7 +2387,8 @@ void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, 
 
       std::fill((*tagArray)[CmiMyRank()].begin(), (*tagArray)[CmiMyRank()].end(), -1);
 
-      peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      //peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      peerAckInfo = (NcpyBcastRecvPeerAckInfo *)((char *)ref + refSize);
       //peerAckInfo->setNumPeers(CmiMyNodeSize() * numElems - 1);
       peerAckInfo->setNumElems(numElems - 1);
       peerAckInfo->setNumPeers(CmiMyNodeSize() - 1);
@@ -2390,6 +2407,7 @@ void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, 
     //if(numElems > 1) {
       //tagArray = new int[CmiMyNodeSize() * numElems * numops];
       tagArray = new std::vector< std::vector<int> >;
+      //tagArray = (std::vector< std::vector<int>> *)((char *)ref + refSize + sizeof(NcpyBcastRecvPeerAckInfo));
       //int[CmiMyNodeSize() * numElems * numops];
 
       //memset(tagArray, -1, CmiMyNodeSize() * numElems * numops * sizeof(int));
@@ -2400,7 +2418,8 @@ void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, 
         std::fill((*tagArray)[i].begin(), (*tagArray)[i].end(), -1);
       }
 
-      peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      //peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      peerAckInfo = (NcpyBcastRecvPeerAckInfo *)((char *)ref + refSize);
       //peerAckInfo->setNumPeers(CmiMyNodeSize() * numElems - 1);
       peerAckInfo->setNumElems(numElems - 1);
       peerAckInfo->setNumPeers(0);
@@ -2410,16 +2429,6 @@ void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, 
       //CmiPrintf("[%d][%d][%d] CkRdmaPostLaterPreprocess Group Bcast Msg env=%p numops=%d num array elems = %d, tagArray =%p, peerAckInfo=%p and setting it to %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), env, numops, numElems, tagArray, peerAckInfo, numElems - 1);
   }
 #endif
-  }
-
-  if(ncpyMode == CkNcpyMode::RDMA) {
-    preprocessRdmaCaseForRgets(layerInfoSize, ncpyObjSize, extraSize, refSize, numops);
-    ref = (char *)CmiAlloc(refSize);
-    setNcpyEmInfo(ref, env, numops, NULL, emMode);
-
-  } else {
-    ref = (char *)CmiAlloc(sizeof(NcpyEmInfo));
-    setNcpyEmInfo(ref, env, numops, NULL, emMode);
   }
 
   ((NcpyEmInfo *)ref)->tagArray = tagArray;
