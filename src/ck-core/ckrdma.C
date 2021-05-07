@@ -2464,7 +2464,6 @@ void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, 
 
   char *ref = (char *)CmiAlloc(sizeof(NcpyEmInfo));
   setNcpyEmInfo(ref, env, numops, NULL, emMode);
-  ((NcpyEmInfo *)ref)->arrayId = arrayIndex;
 
   for(int i=0; i<numops; i++) {
     post[i].ncpyEmInfo = (NcpyEmInfo *)ref;
@@ -2634,16 +2633,12 @@ int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize) {
     post.ncpyEmInfo->counter++;
 
       if(env->getMsgtype() == ArrayBcastFwdMsg) {
+
         CkArray *mgr = getArrayMgrFromMsg(env);
         CkMigratable *elem = mgr->getEltFromArrMgr(post.arrayIndex);
         int localIndex = mgr->getEltLocalIndex(post.arrayIndex);
         ((post.tagArray))[CmiMyRank()][localIndex * numops + post.opIndex] = post.tag;
-        int arrayIndex = post.ncpyEmInfo->arrayId;
 
-
-    
-        
-        
         if(post.ncpyEmInfo->counter == numops) {
           mgr->forwardZCMsgToSpecificElem(env, elem);
         }

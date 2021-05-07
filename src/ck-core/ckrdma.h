@@ -188,8 +188,6 @@ struct NcpyEmInfo{
   void *msg; // pointer to the Charm++ message which will be enqueued after completion of all Rgets
   void *forwardMsg; // used for the ncpy broadcast api
 
-  CmiUInt8 arrayId;
-
   //std::vector< std::vector<int>> *tagArray;
   std::vector<int> *tagArray;
 
