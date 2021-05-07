@@ -652,12 +652,12 @@ void ParamList::printPeerAckInfo(XStr& str, bool isSDAGGen) {
 void Parameter::printPeerAckInfo(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count) {
   Type* dt = type->deref();  // Type, without &
   if (isRdma() && count == 0) {
-    str << "void *peerAckInfo = (void *)(";
+    str << "NcpyBcastRecvPeerAckInfo *peerAckInfo = (";
     if(isSDAGGen)
       str << "genClosure->";
     str << "ncpyBuffer_" << name << ".peerAckInfo);\n";
- 
-    str << "std::vector< std::vector<int> > *tagArray = ";
+
+    str << "std::vector<int> *tagArray = ";
     if(isSDAGGen)
       str << "genClosure->";
     str << "ncpyBuffer_" << name << ".tagArray;\n";

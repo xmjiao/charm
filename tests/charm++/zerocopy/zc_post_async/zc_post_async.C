@@ -113,7 +113,7 @@ class arr : public CBase_arr {
     }
 
     void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
-      //CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy arr post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
+      //CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy arr post em tag=%d\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex, tag);
       CkMatchBuffer(ncpyPost, 0, tag);
       //buffer = destBuffer;
       //size = SIZE;
@@ -175,7 +175,7 @@ class grp : public CBase_grp {
     }
 
     void recv_zerocopy(int *&buffer1, size_t &size1, int *&buffer2, size_t &size2, bool isBcast, CkNcpyBufferPost *ncpyPost) {
-      //CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy group post em\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex);
+      //CkPrintf("[%d][%d][%d][%d] =========== recv_zerocopy group post em tag1=%d, tag2=%d\n", CkMyPe(), CkMyNode(), CkMyRank(), thisIndex, tag1, tag2);
       CkMatchBuffer(ncpyPost, 0, tag1);
       CkMatchBuffer(ncpyPost, 1, tag2);
 

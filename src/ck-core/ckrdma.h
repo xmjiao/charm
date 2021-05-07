@@ -72,7 +72,8 @@ class CkNcpyBuffer : public CmiNcpyBuffer {
 
   public:
 
-  std::vector< std::vector<int>> *tagArray;
+  //std::vector< std::vector<int>> *tagArray;
+  std::vector<int> *tagArray;
 
   NcpyBcastRecvPeerAckInfo *peerAckInfo;
 
@@ -189,7 +190,8 @@ struct NcpyEmInfo{
 
   CmiUInt8 arrayId;
 
-  std::vector< std::vector<int>> *tagArray;
+  //std::vector< std::vector<int>> *tagArray;
+  std::vector<int> *tagArray;
 
   NcpyBcastRecvPeerAckInfo *peerAckInfo;
 };
@@ -507,22 +509,23 @@ struct CkNcpyBufferPost {
 
   CmiUInt8 arrayIndex;
 
-  std::vector< std::vector<int>> *tagArray;
+  //std::vector< std::vector<int>> *tagArray;
+  std::vector<int> *tagArray;
 };
 
 void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag);
 
 void CkMatchNodeBuffer(CkNcpyBufferPost *post, int index, int tag);
 
-void updatePeerCounter(void *ref);
+void updatePeerCounter(NcpyBcastRecvPeerAckInfo *peerAckInfo);
 
 void updateTagArray(envelope *env, int localElems);
 
-void setPosted(std::vector<std::vector<int>> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops, int opIndex);
+void setPosted(std::vector<int> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops, int opIndex);
 
-bool isUnposted(std::vector<std::vector<int>> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops);
+bool isUnposted(std::vector<int> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops);
 
-int extractStoredBuffer(std::vector<std::vector<int>> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops, int opIndex, void *&ptr);
+int extractStoredBuffer(std::vector<int> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops, int opIndex, void *&ptr);
 
 // Function declaration for EM Ncpy Ack handler initialization
 void initEMNcpyAckHandler(void);
