@@ -516,7 +516,7 @@ struct CkNcpyBufferPost {
   CmiUInt8 arrayIndex;
 
   //std::vector< std::vector<int>> *tagArray;
-  std::vector<int> *tagArray;
+  //std::vector<int> *tagArray;
 };
 
 void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag);

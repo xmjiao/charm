@@ -2237,7 +2237,9 @@ void initPostStruct(CkNcpyBufferPost *ncpyPost, int index) {
 void setPostStruct(CkNcpyBufferPost *ncpyPost, int index, CkNcpyBuffer &buffObj, CmiUInt8 elemIndex) {
   ncpyPost[index].srcBuffer = (void *)buffObj.ptr;
   ncpyPost[index].srcSize = buffObj.cnt;
-  ncpyPost[index].tagArray = buffObj.ncpyEmInfo->tagArray;
+  //ncpyPost[index].ncpyEmInfo = buffObj.ncpyEmInfo;
+  //ncpyPost[index].tagArray = buffObj.ncpyEmInfo->tagArray;
+  ncpyPost[index].ncpyEmInfo->tagArray = buffObj.ncpyEmInfo->tagArray;
   ncpyPost[index].opIndex = index;
   ncpyPost[index].arrayIndex = elemIndex;
 }
@@ -2642,7 +2644,7 @@ int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize) {
         CkArray *mgr = getArrayMgrFromMsg(env);
         CkMigratable *elem = mgr->getEltFromArrMgr(post.arrayIndex);
         int localIndex = mgr->getEltLocalIndex(post.arrayIndex);
-        ((post.tagArray))[CmiMyRank()][localIndex * numops + post.opIndex] = post.tag;
+        ((post.ncpyEmInfo->tagArray))[CmiMyRank()][localIndex * numops + post.opIndex] = post.tag;
 
         if(post.ncpyEmInfo->counter == numops) {
           mgr->forwardZCMsgToSpecificElem(env, elem);
@@ -2650,7 +2652,7 @@ int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize) {
 
       } else if(env->getMsgtype() == ForBocMsg) {
         int localIndex = CmiMyRank();
-        ((post.tagArray))[CmiMyRank()][post.opIndex] = post.tag;
+        ((post.ncpyEmInfo->tagArray))[CmiMyRank()][post.opIndex] = post.tag;
 
         if(post.ncpyEmInfo->counter == numops) {
           CmiHandleMessage(env);
