@@ -2100,6 +2100,133 @@ void zcPupIssueRgets(CmiUInt8 id, CkLocMgr *locMgr) {
 
 /**************************** Zerocopy Post API Async Support **************************/
 
+// PE-level Post method
+void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag) {
+
+  // check if tag exists in posted req table
+  auto iter = CkpvAccess(ncpyPostedReqMap).find(tag);
+
+  if(iter == CkpvAccess(ncpyPostedReqMap).end()) {
+
+    auto iter2 = CkpvAccess(ncpyPostedBufferMap).find(tag);
+
+    if(iter2 == CkpvAccess(ncpyPostedBufferMap).end()) { // not found, insert into ncpyPostedBufferMap
+      CkPostedBuffer postedBuff;
+      postedBuff.buffer = destBuffer;
+      postedBuff.bufferSize = destSize;
+      CkpvAccess(ncpyPostedBufferMap).emplace(tag, postedBuff);
+    } else {
+      CkAbort("CkPostBufferInternal: tag %d already exists, use another tag!\n", tag);
+    }
+
+  } else { // found, perform rget
+
+    CkNcpyBufferPost post = iter->second;
+    if(CkPerformRget(post, destBuffer, destSize))  {
+      CkpvAccess(ncpyPostedReqMap).erase(iter);
+    }
+
+  }
+}
+
+// Node-level Post method
+void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag) {
+
+  // check if tag exists in posted req node table
+  auto iter = CksvAccess(ncpyPostedReqNodeMap).find(tag);
+
+  if(iter == CksvAccess(ncpyPostedReqNodeMap).end()) {
+
+    auto iter2 = CksvAccess(ncpyPostedBufferNodeMap).find(tag);
+
+    if(iter2 == CksvAccess(ncpyPostedBufferNodeMap).end()) { // not found, insert into ncpyPostedBufferNodeMap
+      CkPostedBuffer postedBuff;
+      postedBuff.buffer = destBuffer;
+      postedBuff.bufferSize = destSize;
+
+      CmiLock(CksvAccess(_nodeZCBufferReqLock));
+      CksvAccess(ncpyPostedBufferNodeMap).emplace(tag, postedBuff);
+      CmiUnlock(CksvAccess(_nodeZCBufferReqLock));
+    } else {
+      CkAbort("CkPostNodeBufferInternal: tag %d already exists, use another tag!\n", tag);
+    }
+
+  } else { // found, perform rget
+
+    CkNcpyBufferPost post = iter->second;
+
+    if(CkPerformRget(post, destBuffer, destSize)) {
+      CmiLock(CksvAccess(_nodeZCPostReqLock));
+      CksvAccess(ncpyPostedReqNodeMap).erase(iter);
+      CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+    }
+  }
+}
+
+// PE-level Match method
+void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag) {
+
+  post[index].postLater = true;
+
+  // check if tag exists in posted buffer table
+  auto iter = CkpvAccess(ncpyPostedBufferMap).find(tag);
+
+  if(iter == CkpvAccess(ncpyPostedBufferMap).end()) {
+
+    auto iter2 = CkpvAccess(ncpyPostedReqMap).find(tag);
+
+    if(iter2 == CkpvAccess(ncpyPostedReqMap).end()) { // not found, insert into ncpyPostedReqMap
+      post[index].tag = tag;
+      CkpvAccess(ncpyPostedReqMap).emplace(post[index].tag, post[index]);
+    } else {
+      CkAbort("CkMatchBuffer: tag %d already exists, use another tag!\n", tag);
+    }
+
+  } else { // found, perform rget
+
+    CkPostedBuffer *buff = &(iter->second);
+    post[index].tag = tag;
+
+    if(CkPerformRget((post[index]), buff->buffer, buff->bufferSize)) {
+      CkpvAccess(ncpyPostedBufferMap).erase(iter);
+    }
+  }
+}
+
+// Node-level Match method
+void CkMatchNodeBuffer(CkNcpyBufferPost *post, int index, int tag) {
+
+  post[index].postLater = true;
+
+  // check if tag exists posted buffer node table
+  auto iter = CksvAccess(ncpyPostedBufferNodeMap).find(tag);
+
+  if(iter == CksvAccess(ncpyPostedBufferNodeMap).end()) {
+
+    auto iter2 = CksvAccess(ncpyPostedReqNodeMap).find(tag);
+
+    if(iter2 == CksvAccess(ncpyPostedReqNodeMap).end()) { // not found, insert into ncpyPostedReqNodeMap
+      post[index].tag = tag;
+      CmiLock(CksvAccess(_nodeZCPostReqLock));
+      CksvAccess(ncpyPostedReqNodeMap).emplace(post[index].tag, post[index]);
+      CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+    } else {
+      CkAbort("CkMatchNodeBuffer: tag %d already exists, use another tag!\n", tag);
+    }
+
+  } else { // found, perform rget
+
+    CkPostedBuffer *buff = &(iter->second);
+    post[index].tag = tag;
+
+    if(CkPerformRget((post[index]), buff->buffer, buff->bufferSize)) {
+      CmiLock(CksvAccess(_nodeZCBufferReqLock));
+      CksvAccess(ncpyPostedBufferNodeMap).erase(iter);
+      CmiUnlock(CksvAccess(_nodeZCBufferReqLock));
+    }
+  }
+}
+
 void initPostStruct(CkNcpyBufferPost *ncpyPost, int index) {
   ncpyPost[index].regMode = CK_BUFFER_REG;
   ncpyPost[index].deregMode = CK_BUFFER_DEREG;
@@ -2217,127 +2344,6 @@ int extractStoredBuffer(std::vector<std::vector<int>> *tagArray, envelope *env, 
     CkpvAccess(ncpyPostedReqMap).erase(iter);
   }
   return buffSize;
-}
-
-void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag) {
-  // check in posted req table
-  auto iter = CkpvAccess(ncpyPostedReqMap).find(tag);
-  if(iter == CkpvAccess(ncpyPostedReqMap).end()) {
-
-    auto iter2 = CkpvAccess(ncpyPostedBufferMap).find(tag);
-
-    if(iter2 == CkpvAccess(ncpyPostedBufferMap).end()) {
-
-      CkPostedBuffer postedBuff;
-      postedBuff.buffer = destBuffer;
-      postedBuff.bufferSize = destSize;
-      // not found, insert into ncpyPostedBufferMap
-      CkpvAccess(ncpyPostedBufferMap).emplace(tag, postedBuff);
-    } else {
-      CkAbort("CkPostBufferInternal: tag %d already exists, use another tag!\n", tag);
-    }
-
-  } else { // found, perform rget
-    CkNcpyBufferPost post = iter->second;
-
-    CkNcpyBufferPost *post2 = &(iter->second);
-
-    if(CkPerformRget(post, destBuffer, destSize))  {
-      CkpvAccess(ncpyPostedReqMap).erase(iter);
-    }
-  }
-}
-
-void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag) {
-  // check in posted req table
-  auto iter = CksvAccess(ncpyPostedReqNodeMap).find(tag);
-  if(iter == CksvAccess(ncpyPostedReqNodeMap).end()) {
-
-    auto iter2 = CksvAccess(ncpyPostedBufferNodeMap).find(tag);
-
-    if(iter2 == CksvAccess(ncpyPostedBufferNodeMap).end()) {
-      CkPostedBuffer postedBuff;
-      postedBuff.buffer = destBuffer;
-      postedBuff.bufferSize = destSize;
-
-      // not found, insert into ncpyPostedBufferMap
-      CmiLock(CksvAccess(_nodeZCBufferReqLock));
-      CksvAccess(ncpyPostedBufferNodeMap).emplace(tag, postedBuff);
-      CmiUnlock(CksvAccess(_nodeZCBufferReqLock));
-    } else {
-      CkAbort("CkPostNodeBufferInternal: tag %d already exists, use another tag!\n", tag);
-    }
-
-  } else { // found, perform rget
-    CkNcpyBufferPost post = iter->second;
-
-    if(CkPerformRget(post, destBuffer, destSize)) {
-      CmiLock(CksvAccess(_nodeZCPostReqLock));
-      CksvAccess(ncpyPostedReqNodeMap).erase(iter);
-      CmiUnlock(CksvAccess(_nodeZCPostReqLock));
-    }
-  }
-}
-
-void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag) {
-
-  post[index].postLater = true;
-
-  // check in posted buffer table
-  auto iter = CkpvAccess(ncpyPostedBufferMap).find(tag);
-  if(iter == CkpvAccess(ncpyPostedBufferMap).end()) {
-
-    auto iter2 = CkpvAccess(ncpyPostedReqMap).find(tag);
-
-    if(iter2 == CkpvAccess(ncpyPostedReqMap).end()) {
-      // not found, insert into ncpyPostedReqMap
-      post[index].tag = tag;
-      CkpvAccess(ncpyPostedReqMap).emplace(post[index].tag, post[index]);
-    } else {
-      CkAbort("CkMatchBuffer: tag %d already exists, use another tag!\n", tag);
-    }
-  } else { // found, perform rget
-
-    CkPostedBuffer *buff = &(iter->second);
-    post[index].tag = tag;
-
-    if(CkPerformRget((post[index]), buff->buffer, buff->bufferSize)) {
-      CkpvAccess(ncpyPostedBufferMap).erase(iter);
-    }
-  }
-}
-
-void CkMatchNodeBuffer(CkNcpyBufferPost *post, int index, int tag) {
-
-  post[index].postLater = true;
-
-  // check in posted buffer table
-  auto iter = CksvAccess(ncpyPostedBufferNodeMap).find(tag);
-
-  if(iter == CksvAccess(ncpyPostedBufferNodeMap).end()) {
-
-    auto iter2 = CksvAccess(ncpyPostedReqNodeMap).find(tag);
-
-    if(iter2 == CksvAccess(ncpyPostedReqNodeMap).end()) {
-      // not found, insert into ncpyPostedReqNodeMap
-      post[index].tag = tag;
-      CmiLock(CksvAccess(_nodeZCPostReqLock));
-      CksvAccess(ncpyPostedReqNodeMap).emplace(post[index].tag, post[index]);
-      CmiUnlock(CksvAccess(_nodeZCPostReqLock));
-    } else {
-      CkAbort("CkMatchNodeBuffer: tag %d already exists, use another tag!\n", tag);
-    }
-
-  } else { // found, perform rget
-
-    CkPostedBuffer *buff = &(iter->second);
-    post[index].tag = tag;
-    if(CkPerformRget((post[index]), buff->buffer, buff->bufferSize)) {
-      CmiLock(CksvAccess(_nodeZCBufferReqLock));
-      CksvAccess(ncpyPostedBufferNodeMap).erase(iter);
-      CmiUnlock(CksvAccess(_nodeZCBufferReqLock));
-    }
-  }
 }
 
 void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, CkNcpyBufferPost *post) {
@@ -2612,24 +2618,18 @@ int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize) {
 
     post.ncpyEmInfo->counter++;
 
-    if(env->getMsgtype() == ArrayBcastFwdMsg) {
-      CkArray *mgr = getArrayMgrFromMsg(env);
-      int arraySize = mgr->getNumLocalElems();
-
-      CkMigratable *elem = mgr->getEltFromArrMgr(post.arrayIndex);
-      int localIndex = mgr->getEltLocalIndex(post.arrayIndex);
-
-      (*(post.tagArray))[CmiMyRank()][localIndex * numops + post.opIndex] = post.tag;
-
-      int arrayIndex = post.ncpyEmInfo->arrayId;
-
-      if(post.ncpyEmInfo->counter == numops) {
+    if(post.ncpyEmInfo->counter == numops) {
+      if(env->getMsgtype() == ArrayBcastFwdMsg) {
+        CkArray *mgr = getArrayMgrFromMsg(env);
+        CkMigratable *elem = mgr->getEltFromArrMgr(post.arrayIndex);
+        int localIndex = mgr->getEltLocalIndex(post.arrayIndex);
+        (*(post.tagArray))[CmiMyRank()][localIndex * numops + post.opIndex] = post.tag;
+        int arrayIndex = post.ncpyEmInfo->arrayId;
         mgr->forwardZCMsgToSpecificElem(env, elem);
-      }
-    } else if(env->getMsgtype() == ForBocMsg) {
-      int localIndex = CmiMyRank();
-      (*(post.tagArray))[CmiMyRank()][post.opIndex] = post.tag;
-      if(post.ncpyEmInfo->counter == numops) {
+
+      } else if(env->getMsgtype() == ForBocMsg) {
+        int localIndex = CmiMyRank();
+        (*(post.tagArray))[CmiMyRank()][post.opIndex] = post.tag;
         CmiHandleMessage(env);
       }
     }
