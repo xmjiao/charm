@@ -126,12 +126,7 @@ struct NcpyBcastRecvPeerAckInfo{
     int incNumElems(int r) { numElems += r; return numElems; }
     int decNumElems() { return numElems--; }
 #endif
-
-
-
 };
-
-
 
 struct NcpyEmInfo;
 
@@ -167,10 +162,6 @@ class CkNcpyBuffer : public CmiNcpyBuffer {
 
   public:
 
-  //std::vector< std::vector<int>> *tagArray;
-  //std::vector<int> *tagArray;
-
-  //NcpyBcastRecvPeerAckInfo *peerAckInfo;
   NcpyEmInfo *ncpyEmInfo;
 
   // callback to be invoked on the sender/receiver
@@ -203,8 +194,6 @@ class CkNcpyBuffer : public CmiNcpyBuffer {
     CmiNcpyBuffer::pup(p);
     p|cb;
     p((char *)&ncpyEmInfo, sizeof(NcpyEmInfo));
-    //p((char *)&tagArray, sizeof(tagArray));
-    //p((char *)&peerAckInfo, sizeof(peerAckInfo));
   }
 
   friend void CkRdmaDirectAckHandler(void *ack);
@@ -515,8 +504,6 @@ struct CkNcpyBufferPost {
 
   CmiUInt8 arrayIndex;
 
-  //std::vector< std::vector<int>> *tagArray;
-  //std::vector<int> *tagArray;
 };
 
 void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag);
