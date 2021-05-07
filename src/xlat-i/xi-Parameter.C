@@ -655,12 +655,12 @@ void Parameter::printPeerAckInfo(XStr& str, bool genRdma, bool isSDAGGen, bool d
     str << "NcpyBcastRecvPeerAckInfo *peerAckInfo = (";
     if(isSDAGGen)
       str << "genClosure->";
-    str << "ncpyBuffer_" << name << ".peerAckInfo);\n";
+    str << "ncpyBuffer_" << name << ".ncpyEmInfo->peerAckInfo);\n";
 
     str << "std::vector<int> *tagArray = ";
     if(isSDAGGen)
       str << "genClosure->";
-    str << "ncpyBuffer_" << name << ".tagArray;\n";
+    str << "ncpyBuffer_" << name << ".ncpyEmInfo->tagArray;\n";
     count++;
   }
 }
@@ -675,7 +675,7 @@ void Parameter::extractPostedPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool 
     str << " = extractStoredBuffer(";
     if(isSDAGGen)
       str << "genClosure->";
-    str << "ncpyBuffer_" << name << ".tagArray, env, myIndex,";
+    str << "ncpyBuffer_" << name << ".ncpyEmInfo->tagArray, env, myIndex,";
     if(isSDAGGen)
       str << "genClosure->num_rdma_fields,";
     else

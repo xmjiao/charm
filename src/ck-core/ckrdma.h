@@ -66,177 +66,6 @@ void CkPostNodeBuffer(T *buffer, size_t size, int tag) {
   CkPostNodeBufferInternal(destBuffer, destSize, tag);
 }
 
-// Class to represent an Zerocopy buffer
-// CkSendBuffer(....) passed by the user internally translates to a CkNcpyBuffer
-class CkNcpyBuffer : public CmiNcpyBuffer {
-
-  public:
-
-  //std::vector< std::vector<int>> *tagArray;
-  std::vector<int> *tagArray;
-
-  NcpyBcastRecvPeerAckInfo *peerAckInfo;
-
-  // callback to be invoked on the sender/receiver
-  CkCallback cb;
-
-  CkNcpyBuffer() : CmiNcpyBuffer() {}
-
-  explicit CkNcpyBuffer(const void *ptr_, size_t cnt_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
-    cb = CkCallback(CkCallback::ignore);
-    CmiNcpyBuffer::init(ptr_, cnt_, regMode_, deregMode_);
-  }
-
-  explicit CkNcpyBuffer(const void *ptr_, size_t cnt_, CkCallback &cb_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
-    init(ptr_, cnt_, cb_, regMode_, deregMode_);
-  }
-
-  void print() {
-    CkPrintf("[%d][%d][%d] CkNcpyBuffer print: ptr:%p, size:%zu, pe:%d, regMode=%d, deregMode=%d, ref:%p, refAckInfo:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ptr, cnt, pe, regMode, deregMode, ref, refAckInfo);
-  }
-
-  void init(const void *ptr_, size_t cnt_, CkCallback &cb_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
-    cb   = cb_;
-    CmiNcpyBuffer::init(ptr_, cnt_, regMode_, deregMode_);
-  }
-
-  CkNcpyStatus get(CkNcpyBuffer &source);
-  CkNcpyStatus put(CkNcpyBuffer &destination);
-
-  void pup(PUP::er &p) {
-    CmiNcpyBuffer::pup(p);
-    p|cb;
-    p((char *)&tagArray, sizeof(tagArray));
-    p((char *)&peerAckInfo, sizeof(peerAckInfo));
-  }
-
-  friend void CkRdmaDirectAckHandler(void *ack);
-
-  friend void CkRdmaEMBcastAckHandler(void *ack);
-
-  friend void constructSourceBufferObject(NcpyOperationInfo *info, CkNcpyBuffer &src);
-  friend void constructDestinationBufferObject(NcpyOperationInfo *info, CkNcpyBuffer &dest);
-
-  friend envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg);
-  friend void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, int localIndex, CkNcpyBufferPost *postStructs);
-
-  friend void readonlyGet(CkNcpyBuffer &src, CkNcpyBuffer &dest, void *refPtr);
-  friend void readonlyCreateOnSource(CkNcpyBuffer &src);
-
-
-  friend void performEmApiNcpyTransfer(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, CmiSpanningTreeInfo *t, char *ref, int extraSize, CkNcpyMode ncpyMode, int rootNode, ncpyEmApiMode emMode);
-
-  friend void performEmApiRget(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, char *ref, int extraSize, int rootNode, ncpyEmApiMode emMode);
-
-  friend void performEmApiCmaTransfer(CkNcpyBuffer &source, CkNcpyBuffer &dest, CmiSpanningTreeInfo *t, ncpyEmApiMode emMode);
-
-  friend void performEmApiMemcpy(CkNcpyBuffer &source, CkNcpyBuffer &dest, ncpyEmApiMode emMode);
-
-  friend void deregisterMemFromMsg(envelope *env, bool isRecv);
-  friend void CkRdmaEMDeregAndAckHandler(void *ack);
-};
-
-// Ack handler for the Zerocopy Direct API
-// Invoked on the completion of any RDMA operation calling using the Direct API
-void CkRdmaDirectAckHandler(void *ack);
-
-// Method to invoke a callback on a particular pe with a CkNcpyBuffer being passed
-// as a part of a CkDataMsg. This method is used to invoke callbacks on specific pes
-// after the completion of the Zerocopy Direct API operation
-void invokeCallback(void *cb, int pe, CkNcpyBuffer &buff);
-
-// Returns CkNcpyMode::MEMCPY if both the PEs are the same and memcpy can be used
-// Returns CkNcpyMode::CMA if both the PEs are in the same physical node and CMA can be used
-// Returns CkNcpyMode::RDMA if RDMA needs to be used
-CkNcpyMode findTransferMode(int srcPe, int destPe);
-
-void invokeSourceCallback(NcpyOperationInfo *info);
-
-void invokeDestinationCallback(NcpyOperationInfo *info);
-
-// Method to enqueue a message after the completion of an payload transfer
-void enqueueNcpyMessage(int destPe, void *msg);
-
-// Method to increment Qd counter
-inline void zcQdIncrement();
-
-/*********************************** Zerocopy Entry Method API ****************************/
-static inline CkNcpyBuffer CkSendBuffer(const void *ptr_, CkCallback &cb_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
-  return CkNcpyBuffer(ptr_, 0, cb_, regMode_, deregMode_);
-}
-
-static inline CkNcpyBuffer CkSendBuffer(const void *ptr_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
-  return CkNcpyBuffer(ptr_, 0, regMode_, deregMode_);
-}
-
-
-// NOTE: Inside CkRdmaIssueRgets, a large message allocation is made consisting of space
-// for the destination or receiver buffers and some additional information required for processing
-// and acknowledgment handling. The space for additional information is typically equal to
-// sizeof(NcpyEmInfo) + numops * sizeof(NcpyEmBufferInfo)
-
-// This structure is used to store zerocopy information associated with an entry method
-// invocation which uses the RDMA mode of transfer in Zerocopy Entry Method API.
-// A variable of the structure stores the information in order to access it after the
-// completion of the Rget operation (which is an asynchronous call) in order to invoke
-// the entry method
-struct NcpyEmInfo{
-  int numOps; // number of zerocopy operations i.e number of buffers sent using CkSendBuffer
-  int counter; // used for tracking the number of completed RDMA operations
-  int pe;
-  ncpyEmApiMode mode; // used to distinguish between p2p and bcast
-  void *msg; // pointer to the Charm++ message which will be enqueued after completion of all Rgets
-  void *forwardMsg; // used for the ncpy broadcast api
-
-  //std::vector< std::vector<int>> *tagArray;
-  std::vector<int> *tagArray;
-
-  NcpyBcastRecvPeerAckInfo *peerAckInfo;
-};
-
-
-
-
-void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, CkNcpyBufferPost *postStructs);
-void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, CkNcpyBufferPost *postStructs, CmiUInt8 arrayIndex, void *ackInfo);
-void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, CkNcpyBufferPost *postStructs);
-
-// This structure is used to store the buffer information specific to each buffer being sent
-// using the Zerocopy Entry Method API. A variable of the structure stores the information associated
-// with each buffer
-struct NcpyEmBufferInfo{
-  int index;  // Represents the index of the buffer information (from 0,1... numops - 1)
-  NcpyOperationInfo ncpyOpInfo; // Stores all the information required for the zerocopy operation
-};
-
-
-/*
- * Extract ncpy buffer information from the metadata message,
- * allocate buffers and issue ncpy calls (either memcpy or cma read or rdma get)
- */
-envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg = NULL);
-
-void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, int localIndex, CkNcpyBufferPost *postStructs);
-
-void handleEntryMethodApiCompletion(NcpyOperationInfo *info);
-
-void handleReverseEntryMethodApiCompletion(NcpyOperationInfo *info);
-
-// Method called to pack rdma pointers
-void CkPackRdmaPtrs(char *msgBuf);
-
-// Method called to pack rdma pointers
-void CkUnpackRdmaPtrs(char *msgBuf);
-
-// Determine the number of ncpy ops and the sum of the ncpy buffer sizes
-// from the metadata message
-void getRdmaNumopsAndBufsize(envelope *env, int &numops, int &bufsize, int &rootNode);
-
-// Ack handler function for the nocopy EM API
-void CkRdmaEMAckHandler(int destPe, void *ack);
-
-void CkRdmaEMBcastPostAckHandler(void *msg);
-
 struct NcpyBcastRecvPeerAckInfo{
 #if CMK_SMP
   std::atomic<int> numPeers;
@@ -301,6 +130,185 @@ struct NcpyBcastRecvPeerAckInfo{
 
 
 };
+
+
+
+struct NcpyEmInfo;
+
+// NOTE: Inside CkRdmaIssueRgets, a large message allocation is made consisting of space
+// for the destination or receiver buffers and some additional information required for processing
+// and acknowledgment handling. The space for additional information is typically equal to
+// sizeof(NcpyEmInfo) + numops * sizeof(NcpyEmBufferInfo)
+
+// This structure is used to store zerocopy information associated with an entry method
+// invocation which uses the RDMA mode of transfer in Zerocopy Entry Method API.
+// A variable of the structure stores the information in order to access it after the
+// completion of the Rget operation (which is an asynchronous call) in order to invoke
+// the entry method
+struct NcpyEmInfo{
+  int numOps; // number of zerocopy operations i.e number of buffers sent using CkSendBuffer
+  int counter; // used for tracking the number of completed RDMA operations
+  int pe;
+  ncpyEmApiMode mode; // used to distinguish between p2p and bcast
+  void *msg; // pointer to the Charm++ message which will be enqueued after completion of all Rgets
+  void *forwardMsg; // used for the ncpy broadcast api
+
+  //std::vector< std::vector<int>> *tagArray;
+  std::vector<int> *tagArray;
+
+  NcpyBcastRecvPeerAckInfo *peerAckInfo;
+};
+
+
+
+// Class to represent an Zerocopy buffer
+// CkSendBuffer(....) passed by the user internally translates to a CkNcpyBuffer
+class CkNcpyBuffer : public CmiNcpyBuffer {
+
+  public:
+
+  //std::vector< std::vector<int>> *tagArray;
+  //std::vector<int> *tagArray;
+
+  //NcpyBcastRecvPeerAckInfo *peerAckInfo;
+  NcpyEmInfo *ncpyEmInfo;
+
+  // callback to be invoked on the sender/receiver
+  CkCallback cb;
+
+  CkNcpyBuffer() : CmiNcpyBuffer() {}
+
+  explicit CkNcpyBuffer(const void *ptr_, size_t cnt_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
+    cb = CkCallback(CkCallback::ignore);
+    CmiNcpyBuffer::init(ptr_, cnt_, regMode_, deregMode_);
+  }
+
+  explicit CkNcpyBuffer(const void *ptr_, size_t cnt_, CkCallback &cb_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
+    init(ptr_, cnt_, cb_, regMode_, deregMode_);
+  }
+
+  void print() {
+    CkPrintf("[%d][%d][%d] CkNcpyBuffer print: ptr:%p, size:%zu, pe:%d, regMode=%d, deregMode=%d, ref:%p, refAckInfo:%p\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), ptr, cnt, pe, regMode, deregMode, ref, refAckInfo);
+  }
+
+  void init(const void *ptr_, size_t cnt_, CkCallback &cb_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
+    cb   = cb_;
+    CmiNcpyBuffer::init(ptr_, cnt_, regMode_, deregMode_);
+  }
+
+  CkNcpyStatus get(CkNcpyBuffer &source);
+  CkNcpyStatus put(CkNcpyBuffer &destination);
+
+  void pup(PUP::er &p) {
+    CmiNcpyBuffer::pup(p);
+    p|cb;
+    p((char *)&ncpyEmInfo, sizeof(NcpyEmInfo));
+    //p((char *)&tagArray, sizeof(tagArray));
+    //p((char *)&peerAckInfo, sizeof(peerAckInfo));
+  }
+
+  friend void CkRdmaDirectAckHandler(void *ack);
+
+  friend void CkRdmaEMBcastAckHandler(void *ack);
+
+  friend void constructSourceBufferObject(NcpyOperationInfo *info, CkNcpyBuffer &src);
+  friend void constructDestinationBufferObject(NcpyOperationInfo *info, CkNcpyBuffer &dest);
+
+  friend envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg);
+  friend void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, int localIndex, CkNcpyBufferPost *postStructs);
+
+  friend void readonlyGet(CkNcpyBuffer &src, CkNcpyBuffer &dest, void *refPtr);
+  friend void readonlyCreateOnSource(CkNcpyBuffer &src);
+
+
+  friend void performEmApiNcpyTransfer(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, CmiSpanningTreeInfo *t, char *ref, int extraSize, CkNcpyMode ncpyMode, int rootNode, ncpyEmApiMode emMode);
+
+  friend void performEmApiRget(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, char *ref, int extraSize, int rootNode, ncpyEmApiMode emMode);
+
+  friend void performEmApiCmaTransfer(CkNcpyBuffer &source, CkNcpyBuffer &dest, CmiSpanningTreeInfo *t, ncpyEmApiMode emMode);
+
+  friend void performEmApiMemcpy(CkNcpyBuffer &source, CkNcpyBuffer &dest, ncpyEmApiMode emMode);
+
+  friend void deregisterMemFromMsg(envelope *env, bool isRecv);
+  friend void CkRdmaEMDeregAndAckHandler(void *ack);
+};
+
+// Ack handler for the Zerocopy Direct API
+// Invoked on the completion of any RDMA operation calling using the Direct API
+void CkRdmaDirectAckHandler(void *ack);
+
+// Method to invoke a callback on a particular pe with a CkNcpyBuffer being passed
+// as a part of a CkDataMsg. This method is used to invoke callbacks on specific pes
+// after the completion of the Zerocopy Direct API operation
+void invokeCallback(void *cb, int pe, CkNcpyBuffer &buff);
+
+// Returns CkNcpyMode::MEMCPY if both the PEs are the same and memcpy can be used
+// Returns CkNcpyMode::CMA if both the PEs are in the same physical node and CMA can be used
+// Returns CkNcpyMode::RDMA if RDMA needs to be used
+CkNcpyMode findTransferMode(int srcPe, int destPe);
+
+void invokeSourceCallback(NcpyOperationInfo *info);
+
+void invokeDestinationCallback(NcpyOperationInfo *info);
+
+// Method to enqueue a message after the completion of an payload transfer
+void enqueueNcpyMessage(int destPe, void *msg);
+
+// Method to increment Qd counter
+inline void zcQdIncrement();
+
+/*********************************** Zerocopy Entry Method API ****************************/
+static inline CkNcpyBuffer CkSendBuffer(const void *ptr_, CkCallback &cb_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
+  return CkNcpyBuffer(ptr_, 0, cb_, regMode_, deregMode_);
+}
+
+static inline CkNcpyBuffer CkSendBuffer(const void *ptr_, unsigned short int regMode_=CK_BUFFER_REG, unsigned short int deregMode_=CK_BUFFER_DEREG) {
+  return CkNcpyBuffer(ptr_, 0, regMode_, deregMode_);
+}
+
+
+
+
+
+void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, CkNcpyBufferPost *postStructs);
+void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, CkNcpyBufferPost *postStructs, CmiUInt8 arrayIndex, void *ackInfo);
+void CkRdmaPostLaterPreprocess(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, CkNcpyBufferPost *postStructs);
+
+// This structure is used to store the buffer information specific to each buffer being sent
+// using the Zerocopy Entry Method API. A variable of the structure stores the information associated
+// with each buffer
+struct NcpyEmBufferInfo{
+  int index;  // Represents the index of the buffer information (from 0,1... numops - 1)
+  NcpyOperationInfo ncpyOpInfo; // Stores all the information required for the zerocopy operation
+};
+
+
+/*
+ * Extract ncpy buffer information from the metadata message,
+ * allocate buffers and issue ncpy calls (either memcpy or cma read or rdma get)
+ */
+envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg = NULL);
+
+void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, int numops, int rootNode, void **arrPtrs, int *arrSizes, int localIndex, CkNcpyBufferPost *postStructs);
+
+void handleEntryMethodApiCompletion(NcpyOperationInfo *info);
+
+void handleReverseEntryMethodApiCompletion(NcpyOperationInfo *info);
+
+// Method called to pack rdma pointers
+void CkPackRdmaPtrs(char *msgBuf);
+
+// Method called to pack rdma pointers
+void CkUnpackRdmaPtrs(char *msgBuf);
+
+// Determine the number of ncpy ops and the sum of the ncpy buffer sizes
+// from the metadata message
+void getRdmaNumopsAndBufsize(envelope *env, int &numops, int &bufsize, int &rootNode);
+
+// Ack handler function for the nocopy EM API
+void CkRdmaEMAckHandler(int destPe, void *ack);
+
+void CkRdmaEMBcastPostAckHandler(void *msg);
 
 // Structure is used for storing source buffer info to de-reg and invoke acks after completion of CMA operations
 struct NcpyP2PAckInfo{
