@@ -2515,7 +2515,7 @@ add_flag "CMK_HAS_ELF_H='$pass'" "elf.h"
 
 CMK_SUPPORTS_SWAPGLOBALS='0'
 CMK_SUPPORTS_TLSGLOBALS='0'
-if [[ "$CMK_MACOSX" = '1' -a "$CMK_VDIR" = "${CMK_VDIR%x86_64}x86_64" ]]
+if [[ "$CMK_MACOSX" = '1' ]]
 then
   CMK_SUPPORTS_TLSGLOBALS='1'
 elif test $pass -eq 1
@@ -2541,9 +2541,9 @@ then
   fi
 
   # tlsglobals
-  if [[ "$CMK_VDIR" = "${CMK_VDIR%x86_64}x86_64" -o "$CMK_VDIR" = "${CMK_VDIR%i386}i386" ]]
+  if [[ "$CMK_VDIR" = "${CMK_VDIR%x86_64}x86_64" -o "$CMK_VDIR" = "${CMK_VDIR%i386}i386" -o "$CMK_VDIR" = "${CMK_VDIR%arm8}arm8" -o "$CMK_VDIR" = "${CMK_VDIR%ppc64le}ppc64le" ]]
   then
-    if [[ "$CMK_COMPILER_KNOWS_TLSDIRECTSEGREFS" != '1' -a "$CMK_COMPILER" != 'clang' ]]
+    if [[ "$CMK_COMPILER_KNOWS_TLSDIRECTSEGREFS" != '1' -a "$CMK_COMPILER" != 'clang' ]] && [[ "$CMK_VDIR" = "${CMK_VDIR%x86_64}x86_64" -o "$CMK_VDIR" = "${CMK_VDIR%i386}i386" ]]
     then
       CMK_SUPPORTS_TLSGLOBALS='2'
     else

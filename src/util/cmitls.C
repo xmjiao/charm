@@ -33,9 +33,11 @@ extern int quietModeRequested;
  * "ELF Handling For Thread-Local Storage"
  * https://www.akkadia.org/drepper/tls.pdf
  * Of note are sections 3.4.2 (IA-32, a.k.a. x86) and 3.4.6 (x86-64).
+ * For ppc64: https://uclibc.org/docs/tls-ppc64.txt
  */
 
 #if defined __x86_64__ || defined _M_X64
+# define CMK_TLS_VARIANT2
 # define CMK_TLS_X86
 # define CMK_TLS_X86_MOV "movq"
 # ifdef __APPLE__
@@ -45,10 +47,25 @@ extern int quietModeRequested;
 # endif
 # define CMK_TLS_X86_WIDTH "8"
 #elif defined __i386 || defined __i386__ || defined _M_IX86
+# define CMK_TLS_VARIANT2
 # define CMK_TLS_X86
 # define CMK_TLS_X86_MOV "movl"
 # define CMK_TLS_X86_REG "gs"
 # define CMK_TLS_X86_WIDTH "4"
+#elif defined __aarch64__
+# define CMK_TLS_ARM64
+# ifdef __APPLE__
+#  define CMK_TLS_ARM64_REG "tpidrro_el0"
+# else
+#  define CMK_TLS_ARM64_REG "tpidr_el0"
+# endif
+# define CMK_TLS_DISPLACEMENT (0)
+#elif defined __arm__
+# define CMK_TLS_ARM32
+# define CMK_TLS_DISPLACEMENT (0)
+#elif defined __powerpc64__
+# define CMK_TLS_PPC64
+# define CMK_TLS_DISPLACEMENT (0x7000)
 #else
 # define CMK_TLS_SWITCHING_UNAVAILABLE
 #endif
@@ -67,6 +84,12 @@ void* getTLSForKey(size_t key)
   asm volatile (CMK_TLS_X86_MOV " %%" CMK_TLS_X86_REG ":0x0(,%1," CMK_TLS_X86_WIDTH "), %0\n"
                 : "=&r"(ptr)
                 : "r"(key));
+#elif defined CMK_TLS_ARM64
+  void ** block;
+  asm volatile ("mrs %0, " CMK_TLS_ARM64_REG "\n"
+                "and %0, %0, #-8\n"
+                : "=&r"(block));
+  ptr = block[key];
 #endif
   return ptr;
 }
@@ -77,6 +100,12 @@ void setTLSForKey(size_t key, void* newptr)
   asm volatile (CMK_TLS_X86_MOV " %0, %%" CMK_TLS_X86_REG ":0x0(,%1," CMK_TLS_X86_WIDTH ")\n"
                 :
                 : "r"(newptr), "r"(key));
+#elif defined CMK_TLS_ARM64
+  void ** block;
+  asm volatile ("mrs %0, " CMK_TLS_ARM64_REG "\n"
+                "and %0, %0, #-8\n"
+                : "=&r"(block));
+  block[key] = newptr;
 #endif
 }
 
@@ -93,6 +122,16 @@ void* getTLS()
 #if defined CMK_TLS_X86
   asm volatile (CMK_TLS_X86_MOV " %%" CMK_TLS_X86_REG ":0x0, %0\n"
                 : "=&r"(ptr));
+#elif defined CMK_TLS_PPC64
+  asm volatile ("addis %0, 13, 0\n"
+                : "=&r"(ptr));
+#elif defined CMK_TLS_ARM64
+  asm volatile ("mrs %0, " CMK_TLS_ARM64_REG "\n"
+                : "=&r"(ptr));
+#elif defined CMK_TLS_ARM32
+  asm volatile ("mrc p15, 0, %0, c13, c0, 3\n"
+                "bic %0, %0, #3\n"
+                : "=&r"(ptr));
 #endif
   return ptr;
 }
@@ -101,6 +140,18 @@ void setTLS(void* newptr)
 {
 #if defined CMK_TLS_X86
   asm volatile (CMK_TLS_X86_MOV " %0, %%" CMK_TLS_X86_REG ":0x0\n"
+                :
+                : "r"(newptr));
+#elif defined CMK_TLS_PPC64
+  asm volatile ("addis 13, %0, 0\n"
+                :
+                : "r"(newptr));
+#elif defined CMK_TLS_ARM64
+  asm volatile ("msr " CMK_TLS_ARM64_REG ", %0\n"
+                :
+                : "r"(newptr));
+#elif defined CMK_TLS_ARM32
+  asm volatile ("mcr p15, 0, %0, c13, c0, 3\n" // doesn't work, register is read-only in user mode
                 :
                 : "r"(newptr));
 #endif
@@ -142,6 +193,13 @@ static inline void CmiTLSStatsInit()
   CmiTLSDescription.size = 0;
   CmiTLSDescription.align = 0;
   dl_iterate_phdr(count_tls_sizes, &CmiTLSDescription); /* count all PT_TLS sections */
+
+#ifdef CMK_TLS_VARIANT2
+  CmiTLSDescription.offset = CMIALIGN(sizeof(void *), CmiTLSDescription.align);
+#else
+  CmiTLSDescription.offset = CMIALIGN(sizeof(void *) * 2, CmiTLSDescription.align);
+#endif
+  CmiTLSDescription.size += CmiTLSDescription.offset;
 }
 
 #elif defined __APPLE__
@@ -450,6 +508,13 @@ static void CmiTLSStatsInit()
   {
     const size_t align = CmiTLSDescription.align = phdr->p_align;
     CmiTLSDescription.size = CMIALIGN(phdr->p_memsz, align);
+
+#ifdef CMK_TLS_VARIANT2
+    CmiTLSDescription.offset = CMIALIGN(sizeof(void *), align);
+#else
+    CmiTLSDescription.offset = CMIALIGN(sizeof(void *) * 2, align);
+#endif
+    CmiTLSDescription.size += CmiTLSDescription.offset;
   }
 }
 
@@ -580,10 +645,19 @@ void CmiTLSCreateSegUsingPtr(const tlsseg_t * threadParent, tlsseg_t * t, void *
 
   t->memseg = memseg;
 #else
-  memcpy(memseg, (const char *)threadParent->memseg - CmiTLSDescription.size, CmiTLSDescription.size);
+#ifdef CMK_TLS_VARIANT2
+  auto src = (const char *)threadParent->memseg - (CmiTLSDescription.size - CmiTLSDescription.offset);
+  auto threadpointer = (Addr)(memseg + CmiTLSDescription.size - CmiTLSDescription.offset);
+  auto selfreference = (void **)threadpointer;
+#else
+  auto src = (const char *)threadParent->memseg - CMK_TLS_DISPLACEMENT;
+  auto selfreference = (void **)memseg;
+  auto threadpointer = (Addr)(memseg + CMK_TLS_DISPLACEMENT);
+#endif
 
-  t->memseg = (Addr)(memseg + CmiTLSDescription.size);
-  /* printf("[%d] 2 ALIGN %d MEM %p SIZE %d\n", CmiMyPe(), CmiTLSDescription.align, t->memseg, CmiTLSDescription.size); */
+  memcpy(memseg, src, CmiTLSDescription.size);
+  t->memseg = threadpointer;
+  *selfreference = selfreference;
 #endif
 }
 
@@ -591,8 +665,10 @@ void * CmiTLSGetBuffer(tlsseg_t * t)
 {
 #if defined __APPLE__
   return t->memseg;
+#elif defined CMK_TLS_VARIANT2
+  return (char *)t->memseg - (CmiTLSDescription.size - CmiTLSDescription.offset);
 #else
-  return (char *)t->memseg - CmiTLSDescription.size;
+  return (char *)t->memseg - CMK_TLS_DISPLACEMENT;
 #endif
 }
 
