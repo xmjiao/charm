@@ -845,6 +845,7 @@ void CmiNumberHandlerEx(int n, CmiHandlerEx h,void *userPtr) {
 int CmiRegisterHandler(CmiHandler h)
 {
   int Count = CpvAccess(CmiHandlerCount);
+  //CmiPrintf("[%d] Registering handler %d\n", CmiMyPe(), Count);
   CmiNumberHandler(Count, h);
   CpvAccess(CmiHandlerCount) = Count+DIST_BETWEEN_HANDLERS;
   return Count;

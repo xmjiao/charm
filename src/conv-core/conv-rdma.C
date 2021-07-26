@@ -124,6 +124,8 @@ void CmiOnesidedDirectInit(void) {
   get_request_handler_idx = CmiRegisterHandler((CmiHandler)getRequestHandler);
   put_data_handler_idx = CmiRegisterHandler((CmiHandler)putDataHandler);
   zc_pup_handler_idx = CmiRegisterHandler((CmiHandler)zcPupHandler);
+
+  CmiSetDirectNcpyAckHandler(CmiRdmaDirectAckHandler);
 }
 
 /****************************** Zerocopy Direct API *****************************/
@@ -164,6 +166,223 @@ void CmiNcpyBuffer::rdmaGet(CmiNcpyBuffer &source, int ackSize, char *srcAck, ch
 
   CmiIssueRget(ncpyOpInfo);
 }
+
+void invokeCallbackHandler(CmiNcpyBuffer &buffer) {
+  if(buffer.handler != CMK_IGNORE_HANDLER) {
+    ncpyCallbackMsg *msg = (ncpyCallbackMsg *)CmiAlloc(sizeof(ncpyCallbackMsg));
+    CmiSetHandler(msg, buffer.handler);
+    msg->buff = buffer;
+    CmiSyncSendAndFree(buffer.pe, sizeof(ncpyCallbackMsg), msg);
+  }
+}
+
+
+// Perform a nocopy get operation into this destination using the passed source
+CmiNcpyStatus CmiNcpyBuffer::get(CmiNcpyBuffer &source){
+
+  if(regMode == CMK_BUFFER_NOREG || source.regMode == CMK_BUFFER_NOREG) {
+    CmiAbort("Cannot perform RDMA operations in CK_BUFFER_NOREG mode\n");
+  }
+
+  // Check that the source buffer fits into the destination buffer
+  if(cnt < source.cnt)
+    CmiAbort("CmiNcpyBuffer::get (destination.cnt < source.cnt) Destination buffer is smaller than the source buffer\n");
+
+  // Check that this object is local when get is called
+  CmiAssert(CmiNodeOf(pe) == CmiMyNode());
+
+  CmiNcpyMode transferMode = findTransferMode(source.pe, pe);
+
+  //Check if it is a within-process sending
+  if(transferMode == CmiNcpyMode::MEMCPY) {
+    memcpyGet(source);
+
+#if CMK_REG_REQUIRED
+    // De-register source
+    if(source.isRegistered && source.deregMode == CMK_BUFFER_DEREG)
+      deregisterBuffer(source);
+#endif
+
+    //Invoke the source callback
+    //source.cb.send(sizeof(CmiNcpyBuffer), &source);
+    invokeCallbackHandler(source);
+
+#if CMK_REG_REQUIRED
+    // De-register destination
+    if(isRegistered && deregMode == CMK_BUFFER_DEREG)
+      deregisterBuffer(*this);
+#endif
+
+    //Invoke the destination callback
+    //cb.send(sizeof(CmiNcpyBuffer), this);
+    invokeCallbackHandler(*this);
+
+    // rdma data transfer complete
+    return CmiNcpyStatus::complete;
+
+#if CMK_USE_CMA
+  } else if(transferMode == CmiNcpyMode::CMA) {
+
+    cmaGet(source);
+
+#if CMK_REG_REQUIRED
+    // De-register source and invoke cb
+    if(source.isRegistered && source.deregMode == CMK_BUFFER_DEREG)
+      invokeCmaDirectRemoteDeregAckHandler(source, ncpyHandlerIdx::CMA_DEREG_ACK_DIRECT); // Send a message to de-register source buffer and invoke callback
+    else
+#endif
+      //source.cb.send(sizeof(CmiNcpyBuffer), &source); //Invoke the source callback
+      invokeCallbackHandler(source);
+
+#if CMK_REG_REQUIRED
+    // De-register destination
+    if(isRegistered && deregMode == CMK_BUFFER_DEREG)
+      deregisterBuffer(*this);
+#endif
+
+    //Invoke the destination callback
+    //cb.send(sizeof(CmiNcpyBuffer), this);
+    //CmiHandlerInfo *h = &(CmiHandlerToInfo(handler));
+    //h->hdlr(nullptr, h->userPtr);
+    invokeCallbackHandler(*this);
+
+    // rdma data transfer complete
+    return CmiNcpyStatus::complete;
+
+#endif // end of CMK_USE_CMA
+  } else if (transferMode == CmiNcpyMode::RDMA) {
+
+    //zcQdIncrement();
+
+    //rdmaGet(source, sizeof(CkCallback), (char *)&source.cb, (char *)&cb);
+    rdmaGet(source, sizeof(int), (char *)(&source.handler), (char *)(&handler));
+
+    // rdma data transfer incomplete
+    return CmiNcpyStatus::incomplete;
+
+  } else {
+    CmiAbort("CmiNcpyBuffer::get : Invalid CmiNcpyMode");
+  }
+}
+
+void constructSourceBufferObject(NcpyOperationInfo *info, CmiNcpyBuffer &src) {
+  src.ptr = info->srcPtr;
+  src.pe  = info->srcPe;
+  src.cnt = info->srcSize;
+  src.ref = info->srcRef;
+  src.regMode = info->srcRegMode;
+  src.deregMode = info->srcDeregMode;
+  src.isRegistered = info->isSrcRegistered;
+  memcpy((char *)(&src.handler), info->srcAck, info->srcAckSize); // initialize cb
+  memcpy((char *)(src.layerInfo), info->srcLayerInfo, info->srcLayerSize); // initialize layerInfo
+}
+
+void constructDestinationBufferObject(NcpyOperationInfo *info, CmiNcpyBuffer &dest) {
+  dest.ptr = info->destPtr;
+  dest.pe  = info->destPe;
+  dest.cnt = info->destSize;
+  dest.ref = info->destRef;
+  dest.regMode = info->destRegMode;
+  dest.deregMode = info->destDeregMode;
+  dest.isRegistered = info->isDestRegistered;
+  memcpy((char *)(&dest.handler), info->destAck, info->destAckSize); // initialize cb
+  memcpy((char *)(dest.layerInfo), info->destLayerInfo, info->destLayerSize); // initialize layerInfo
+}
+
+void invokeSourceCallback(NcpyOperationInfo *info) {
+  int handler = *(int *)(info->srcAck);
+  if(handler != CMK_IGNORE_HANDLER) {
+    if(info->ackMode == CMK_SRC_DEST_ACK || info->ackMode == CMK_SRC_ACK) {
+      ncpyCallbackMsg *msg = (ncpyCallbackMsg *)CmiAlloc(sizeof(ncpyCallbackMsg));
+      CmiSetHandler(msg, handler);
+
+      CmiNcpyBuffer src;
+      constructSourceBufferObject(info, src);
+      msg->buff = src;
+      CmiSyncSendAndFree(info->srcPe, sizeof(ncpyCallbackMsg), msg);
+    }
+  }
+}
+
+void invokeDestinationCallback(NcpyOperationInfo *info) {
+  int handler = *(int *)(info->destAck);
+  if(handler != CMK_IGNORE_HANDLER) {
+    if(info->ackMode == CMK_SRC_DEST_ACK || info->ackMode == CMK_DEST_ACK) {
+      ncpyCallbackMsg *msg = (ncpyCallbackMsg *)CmiAlloc(sizeof(ncpyCallbackMsg));
+      CmiSetHandler(msg, handler);
+
+      CmiNcpyBuffer dest;
+      constructDestinationBufferObject(info, dest);
+      msg->buff = dest;
+      CmiSyncSendAndFree(info->destPe, sizeof(ncpyCallbackMsg), msg);
+    }
+  }
+}
+
+void handleDirectApiCompletion(NcpyOperationInfo *info) {
+
+  int freeMe = info->freeMe;
+
+  if(CmiMyNode() == CmiNodeOf(info->destPe)) {
+#if CMK_REG_REQUIRED
+    if(info->isDestRegistered == 1 && info->destDeregMode == CK_BUFFER_DEREG)
+      deregisterDestBuffer(info);
+#endif
+
+    // Invoke the destination callback
+    invokeDestinationCallback(info);
+
+#if CMK_REG_REQUIRED
+    // send a message to the source to de-register and invoke callback
+    if(info->isSrcRegistered == 1 && info->srcDeregMode == CK_BUFFER_DEREG) {
+      freeMe = CMK_DONT_FREE_NCPYOPINFO; // don't free info here, it'll be freed by the machine layer
+      QdCreate(1); // Matching QdProcess in CkRdmaDirectAckHandler
+      CmiInvokeRemoteDeregAckHandler(info->srcPe, info);
+    } else
+#endif
+      invokeSourceCallback(info);
+  }
+
+  if(CmiMyNode() == CmiNodeOf(info->srcPe)) {
+#if CMK_REG_REQUIRED
+    if(info->isSrcRegistered == 1 && info->srcDeregMode == CK_BUFFER_DEREG)
+      deregisterSrcBuffer(info);
+#endif
+
+    // Invoke the source callback
+    invokeSourceCallback(info);
+
+#if CMK_REG_REQUIRED
+    // send a message to the destination to de-register and invoke callback
+    if(info->isDestRegistered == 1 && info->destDeregMode == CK_BUFFER_DEREG) {
+      freeMe = CMK_DONT_FREE_NCPYOPINFO; // don't free info here, it'll be freed by the machine layer
+      QdCreate(1); // Matching QdProcess in CkRdmaDirectAckHandler
+      CmiInvokeRemoteDeregAckHandler(info->destPe, info);
+    } else
+#endif
+      invokeDestinationCallback(info);
+  }
+
+  if(freeMe == CMK_FREE_NCPYOPINFO)
+    CmiFree(info);
+}
+
+// Ack handler function which invokes the callback
+void CmiRdmaDirectAckHandler(void *ack) {
+  NcpyOperationInfo *info = (NcpyOperationInfo *)(ack);
+
+  switch(info->opMode) {
+    case CMK_DIRECT_API             : //CmiPrintf("[%d] CMK_DIRECT_API completed\n", CmiMyPe());
+                                      handleDirectApiCompletion(info); // Ncpy Direct API
+                                      break;
+    default                         : CmiAbort("CmiRdmaDirectAckHandler: Unknown ncpyOpInfo->opMode");
+                                      break;
+  }
+}
+
+
+
+
 
 NcpyOperationInfo *CmiNcpyBuffer::createNcpyOpInfo(CmiNcpyBuffer &source, CmiNcpyBuffer &destination, int ackSize, char *srcAck, char *destAck, int rootNode, int opMode, void *refPtr) {
 

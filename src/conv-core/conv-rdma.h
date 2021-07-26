@@ -5,6 +5,9 @@
 #include "pup.h"
 
 /*********************************** Zerocopy Direct API **********************************/
+
+#define CMK_IGNORE_HANDLER -20
+
 typedef void (*RdmaAckCallerFn)(void *token);
 
 /* Support for Direct API */
@@ -158,10 +161,14 @@ class CmiNcpyBuffer {
   // ack handling pointer used for bcast and CMA p2p transfers
   const void *refAckInfo;
 
+  // callback handler
+  int handler;
+
   CmiNcpyBuffer() : isRegistered(false), ptr(NULL), cnt(0), pe(-1), regMode(CMK_BUFFER_REG), deregMode(CMK_BUFFER_DEREG), ref(NULL), refAckInfo(NULL) {}
 
-  explicit CmiNcpyBuffer(const void *ptr_, size_t cnt_, unsigned short int regMode_=CMK_BUFFER_REG, unsigned short int deregMode_=CMK_BUFFER_DEREG) {
+  explicit CmiNcpyBuffer(const void *ptr_, size_t cnt_, int handler_=CMK_IGNORE_HANDLER, unsigned short int regMode_=CMK_BUFFER_REG, unsigned short int deregMode_=CMK_BUFFER_DEREG) {
     init(ptr_, cnt_, regMode_, deregMode_);
+    handler = handler_;
   }
 
   void print() {
@@ -269,8 +276,11 @@ class CmiNcpyBuffer {
 
   friend inline void deregisterBuffer(CmiNcpyBuffer &buffInfo);
 
+  CmiNcpyStatus get(CmiNcpyBuffer &source);
 
 };
+
+void CmiRdmaDirectAckHandler(void *ack);
 
 /***************************** Other Util *********************************/
 
@@ -289,6 +299,13 @@ struct ncpyHandlerMsg{
   ncpyHandlerIdx opMode;
   void *ref;
 };
+
+struct ncpyCallbackMsg{
+  char cmicore[CmiMsgHeaderSizeBytes];
+  CmiNcpyBuffer buff;
+};
+
+
 
 struct zcPupSourceInfo{
   CmiNcpyBuffer src;
