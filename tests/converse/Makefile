@@ -2,6 +2,7 @@
 
 DIRS = \
   megacon \
+  simpleGet \
 
 TESTDIRS = $(DIRS)
 
