@@ -5,6 +5,7 @@ DIRS = \
   pingpong \
   randomttl \
   kNeighbors \
+  zcPingpong \
 
 TESTDIRS = $(DIRS)
 
