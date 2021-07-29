@@ -281,6 +281,7 @@ class CmiNcpyBuffer {
 };
 
 void CmiRdmaDirectAckHandler(void *ack);
+void CmiInvokeRemoteDeregAckHandler(int pe, NcpyOperationInfo *ncpyOpInfo);
 
 /***************************** Other Util *********************************/
 
@@ -299,6 +300,8 @@ struct ncpyHandlerMsg{
   ncpyHandlerIdx opMode;
   void *ref;
 };
+
+void _ncpyAckHandler(ncpyHandlerMsg *msg);
 
 struct ncpyCallbackMsg{
   char cmicore[CmiMsgHeaderSizeBytes];

@@ -49,6 +49,8 @@ void setupPingpong(regularMsg *setupMsg) {
   //CmiPrintf("[%d] setupPingpong msgSize=%d\n", CmiMyPe(), CpvAccess(msgSize));
 
   if(CpvAccess(buffer) != nullptr) {
+    CpvAccess(mySrcBuff).deregisterMem();
+    CpvAccess(myDestBuff).deregisterMem();
     //CmiPrintf("[%d] freeing buffer %p\n", CmiMyPe(), CpvAccess(buffer));
     CmiFree(CpvAccess(buffer));
   }
@@ -154,12 +156,12 @@ void setupZcPingpong(char *setupMsg) {
 
   //CmiPrintf("[%d] setupZcPingpong message size is %d and buffer is %p\n", CmiMyPe(), CpvAccess(msgSize), CpvAccess(buffer));
 
-  CpvAccess(mySrcBuff) = CmiNcpyBuffer(CpvAccess(buffer), CpvAccess(msgSize));
+  CpvAccess(mySrcBuff) = CmiNcpyBuffer(CpvAccess(buffer), CpvAccess(msgSize), CMK_IGNORE_HANDLER, CMK_BUFFER_REG, CMK_BUFFER_NODEREG);
 
   if(CmiMyPe() == 0)
-    CpvAccess(myDestBuff) = CmiNcpyBuffer(CpvAccess(buffer), CpvAccess(msgSize), CpvAccess(node0ZCCompHandler));
+    CpvAccess(myDestBuff) = CmiNcpyBuffer(CpvAccess(buffer), CpvAccess(msgSize), CpvAccess(node0ZCCompHandler), CMK_BUFFER_REG, CMK_BUFFER_NODEREG);
   else
-    CpvAccess(myDestBuff) = CmiNcpyBuffer(CpvAccess(buffer), CpvAccess(msgSize), CpvAccess(node1ZCCompHandler));
+    CpvAccess(myDestBuff) = CmiNcpyBuffer(CpvAccess(buffer), CpvAccess(msgSize), CpvAccess(node1ZCCompHandler), CMK_BUFFER_REG, CMK_BUFFER_NODEREG);
 
 
   char *startMsg = (char *)CmiAlloc(CmiMsgHeaderSizeBytes);
@@ -219,13 +221,15 @@ void node0ZCHandlerFunc(zcMsg *msg) {
 }
 
 void node0ZCCompHandlerFunc(char *compMsg) {
-  //CmiPrintf("[%d] node0ZCCompHandlerFunc\n", CmiMyPe());
   CpvAccess(cycleNum)++;
   CmiFree(compMsg);
+
+  //CmiPrintf("[%d] node0ZCCompHandlerFunc num completed = %d, num total = %d\n", CmiMyPe(), CpvAccess(cycleNum), CpvAccess(nCycles));
 
   if (CpvAccess(cycleNum) == CpvAccess(nCycles)) {
     CpvAccess(cycleNum) = 0;
     CpvAccess(endTime2) = CmiWallTimer();
+    //CmiPrintf("[%d] node0ZCCompHandlerFunc one size done, moving onto next size\n", CmiMyPe());
 
     finishZcPingpong();
   } else {

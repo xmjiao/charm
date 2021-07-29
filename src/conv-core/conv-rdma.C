@@ -7,8 +7,10 @@
 #include <vector>
 
 bool useCMAForZC;
+
 CpvExtern(std::vector<NcpyOperationInfo *>, newZCPupGets);
 static int zc_pup_handler_idx;
+static int ncpy_handler_idx;
 
 // Methods required to keep the Nocopy Direct API functional on non-LRTS layers
 #if !CMK_USE_LRTS
@@ -125,6 +127,8 @@ void CmiOnesidedDirectInit(void) {
   put_data_handler_idx = CmiRegisterHandler((CmiHandler)putDataHandler);
   zc_pup_handler_idx = CmiRegisterHandler((CmiHandler)zcPupHandler);
 
+  ncpy_handler_idx = CmiRegisterHandler((CmiHandler)_ncpyAckHandler);
+
   CmiSetDirectNcpyAckHandler(CmiRdmaDirectAckHandler);
 }
 
@@ -176,12 +180,74 @@ void invokeCallbackHandler(CmiNcpyBuffer &buffer) {
   }
 }
 
+void invokeCallback(CmiNcpyBuffer *buffer) {
+  if(buffer->handler != CMK_IGNORE_HANDLER) {
+    ncpyCallbackMsg *msg = (ncpyCallbackMsg *)CmiAlloc(sizeof(ncpyCallbackMsg));
+    CmiSetHandler(msg, buffer->handler);
+    msg->buff = *buffer;
+    CmiSyncSendAndFree(buffer->pe, sizeof(ncpyCallbackMsg), msg);
+  }
+//#if CMK_SMP
+//    //call to callbackgroup to call the callback when calling from comm thread
+//    //this adds one more trip through the scheduler
+//    _ckcallbackgroup[buff.pe].call(buff.cb, sizeof(CkNcpyBuffer), (const char *)(&buff));
+//#else
+//    //Invoke the callback
+//    buff.cb.send(sizeof(CkNcpyBuffer), &buff);
+//#endif
+}
+
+#if CMK_USE_CMA && CMK_REG_REQUIRED
+void CkRdmaEMDeregAndAckDirectHandler(void *ack) {
+
+  CmiNcpyBuffer buffInfo = *(CmiNcpyBuffer *)ack;
+
+  CmiPrintf("[%d] CkRdmaEMDeregAndAckDirectHandler\n", CmiMyPe());
+  buffInfo.print();
+
+  // De-register source buffer
+  deregisterBuffer(buffInfo);
+
+  // Invoke Callback
+  invokeCallback(&buffInfo);
+}
+#endif
+
+inline void _ncpyAckHandler(ncpyHandlerMsg *msg) {
+  //QdProcess(1);
+
+  switch(msg->opMode) {
+#if CMK_USE_CMA && CMK_REG_REQUIRED
+    case ncpyHandlerIdx::CMA_DEREG_ACK_DIRECT  : CkRdmaEMDeregAndAckDirectHandler((char *)msg + sizeof(ncpyHandlerMsg));
+                                                 break;
+#endif
+    default                                    : CmiAbort("_ncpyAckHandler: Invalid OpMode\n");
+                                                 break;
+  }
+
+  CmiFree(msg); // Allocated in invokeRemoteNcpyAckHandler
+}
+
+
+inline void invokeCmaDirectRemoteDeregAckHandler(CmiNcpyBuffer &buffInfo, ncpyHandlerIdx opMode) {
+
+  CmiPrintf("[%d] invokeCmaDirectRemoteDeregAckHandler\n", CmiMyPe());
+  buffInfo.print();
+  ncpyHandlerMsg *msg = (ncpyHandlerMsg *)CmiAlloc(sizeof(ncpyHandlerMsg) + sizeof(CmiNcpyBuffer));
+
+  memcpy((char *)msg + sizeof(ncpyHandlerMsg), (char *)&buffInfo, sizeof(CmiNcpyBuffer));
+
+  msg->opMode = opMode;
+  CmiSetHandler(msg, ncpy_handler_idx);
+  //QdCreate(1); // Matching QdProcess in _ncpyAckHandler
+  CmiSyncSendAndFree(buffInfo.pe, sizeof(ncpyHandlerMsg) + sizeof(CmiNcpyBuffer), (char *)msg);
+}
 
 // Perform a nocopy get operation into this destination using the passed source
 CmiNcpyStatus CmiNcpyBuffer::get(CmiNcpyBuffer &source){
 
   if(regMode == CMK_BUFFER_NOREG || source.regMode == CMK_BUFFER_NOREG) {
-    CmiAbort("Cannot perform RDMA operations in CK_BUFFER_NOREG mode\n");
+    CmiAbort("Cannot perform RDMA operations in CMK_BUFFER_NOREG mode\n");
   }
 
   // Check that the source buffer fits into the destination buffer
@@ -319,13 +385,23 @@ void invokeDestinationCallback(NcpyOperationInfo *info) {
   }
 }
 
+inline void deregisterDestBuffer(NcpyOperationInfo *ncpyOpInfo) {
+  CmiDeregisterMem(ncpyOpInfo->destPtr, ncpyOpInfo->destLayerInfo + CmiGetRdmaCommonInfoSize(), ncpyOpInfo->destPe, ncpyOpInfo->destRegMode);
+  ncpyOpInfo->isDestRegistered = 0;
+}
+
+inline void deregisterSrcBuffer(NcpyOperationInfo *ncpyOpInfo) {
+  CmiDeregisterMem(ncpyOpInfo->srcPtr, ncpyOpInfo->srcLayerInfo + CmiGetRdmaCommonInfoSize(), ncpyOpInfo->srcPe, ncpyOpInfo->srcRegMode);
+  ncpyOpInfo->isSrcRegistered = 0;
+}
+
 void handleDirectApiCompletion(NcpyOperationInfo *info) {
 
   int freeMe = info->freeMe;
 
   if(CmiMyNode() == CmiNodeOf(info->destPe)) {
 #if CMK_REG_REQUIRED
-    if(info->isDestRegistered == 1 && info->destDeregMode == CK_BUFFER_DEREG)
+    if(info->isDestRegistered == 1 && info->destDeregMode == CMK_BUFFER_DEREG)
       deregisterDestBuffer(info);
 #endif
 
@@ -334,9 +410,9 @@ void handleDirectApiCompletion(NcpyOperationInfo *info) {
 
 #if CMK_REG_REQUIRED
     // send a message to the source to de-register and invoke callback
-    if(info->isSrcRegistered == 1 && info->srcDeregMode == CK_BUFFER_DEREG) {
+    if(info->isSrcRegistered == 1 && info->srcDeregMode == CMK_BUFFER_DEREG) {
       freeMe = CMK_DONT_FREE_NCPYOPINFO; // don't free info here, it'll be freed by the machine layer
-      QdCreate(1); // Matching QdProcess in CkRdmaDirectAckHandler
+      //QdCreate(1); // Matching QdProcess in CkRdmaDirectAckHandler
       CmiInvokeRemoteDeregAckHandler(info->srcPe, info);
     } else
 #endif
@@ -345,7 +421,7 @@ void handleDirectApiCompletion(NcpyOperationInfo *info) {
 
   if(CmiMyNode() == CmiNodeOf(info->srcPe)) {
 #if CMK_REG_REQUIRED
-    if(info->isSrcRegistered == 1 && info->srcDeregMode == CK_BUFFER_DEREG)
+    if(info->isSrcRegistered == 1 && info->srcDeregMode == CMK_BUFFER_DEREG)
       deregisterSrcBuffer(info);
 #endif
 
@@ -354,9 +430,9 @@ void handleDirectApiCompletion(NcpyOperationInfo *info) {
 
 #if CMK_REG_REQUIRED
     // send a message to the destination to de-register and invoke callback
-    if(info->isDestRegistered == 1 && info->destDeregMode == CK_BUFFER_DEREG) {
+    if(info->isDestRegistered == 1 && info->destDeregMode == CMK_BUFFER_DEREG) {
       freeMe = CMK_DONT_FREE_NCPYOPINFO; // don't free info here, it'll be freed by the machine layer
-      QdCreate(1); // Matching QdProcess in CkRdmaDirectAckHandler
+      //QdCreate(1); // Matching QdProcess in CkRdmaDirectAckHandler
       CmiInvokeRemoteDeregAckHandler(info->destPe, info);
     } else
 #endif
@@ -375,7 +451,11 @@ void CmiRdmaDirectAckHandler(void *ack) {
     case CMK_DIRECT_API             : //CmiPrintf("[%d] CMK_DIRECT_API completed\n", CmiMyPe());
                                       handleDirectApiCompletion(info); // Ncpy Direct API
                                       break;
-    default                         : CmiAbort("CmiRdmaDirectAckHandler: Unknown ncpyOpInfo->opMode");
+    case CMK_EM_API_SRC_ACK_INVOKE  : invokeSourceCallback(info);
+                                      break;
+    case CMK_EM_API_DEST_ACK_INVOKE : invokeDestinationCallback(info);
+                                      break;
+    default                         : CmiAbort("CmiRdmaDirectAckHandler: Unknown ncpyOpInfo->opMode %d", info->opMode);
                                       break;
   }
 }
