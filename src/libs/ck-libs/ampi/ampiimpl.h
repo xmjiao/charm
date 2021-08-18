@@ -1701,6 +1701,19 @@ class AmpiRequestList {
     return idx;
   }
 
+  inline size_t size() noexcept {
+    return reqs.size();
+  }
+
+  inline size_t validSize() noexcept {
+    size_t count=0;
+    for (int i=0; i<reqs.size(); i++) {
+      if (reqs[i] == NULL) continue;
+      else count++;
+    }
+    return count;
+  }
+
   inline void checkRequest(MPI_Request idx) const noexcept {
     if (idx != MPI_REQUEST_NULL && (idx < 0 || idx >= reqs.size()))
       CkAbort("Invalid MPI_Request\n");
@@ -2077,6 +2090,12 @@ public:
   /// Is this in-order?
   inline bool isInOrder(int seqIdx, CMK_REFNUM_TYPE seq) noexcept {
     return (seq == elements[seqIdx].getSeqIncoming());
+  }
+
+  inline CMK_REFNUM_TYPE getSeqIncoming(int seqIdx) noexcept {
+    int seq = elements[seqIdx].getSeqIncoming();
+    elements[seqIdx].incSeqIncoming();
+    return seq;
   }
 
   /// Get an out-of-order message from the table.
@@ -2503,6 +2522,8 @@ class ampiParent final : public CBase_ampiParent {
     (func)((void*)invec, inoutvec, &count, &datatype);
   }
 
+  CMI_WARN_UNUSED_RESULT ampiParent* waitWithoutFree(MPI_Request* req, MPI_Status *sts) noexcept;
+
   CMI_WARN_UNUSED_RESULT ampiParent* wait(MPI_Request* req, MPI_Status* sts) noexcept;
   CMI_WARN_UNUSED_RESULT ampiParent* waitall(int count, MPI_Request request[], MPI_Status sts[]=MPI_STATUSES_IGNORE) noexcept;
   void init() noexcept;
@@ -2637,9 +2658,12 @@ class ampi final : public CBase_ampi {
   void generic(AmpiMsg *) noexcept;
   void genericRdma(char* buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank) noexcept;
   void completedRdmaSend(CkDataMsg *msg) noexcept;
+  void completedRdmaBcastSend(CkDataMsg *msg) noexcept;
   void completedRdmaRecv(CkDataMsg *msg) noexcept;
   void requestPut(MPI_Request req, CkNcpyBuffer targetInfo) noexcept;
   void bcastResult(AmpiMsg *msg) noexcept;
+  void bcastResultRdma(char* buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank, CkNcpyBufferPost *post) noexcept;
+  void bcastResultRdma(char* buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank) noexcept;
   void barrierResult(void) noexcept;
   void ibarrierResult(void) noexcept;
   void rednResult(CkReductionMsg *msg) noexcept;
@@ -2741,6 +2765,8 @@ class ampi final : public CBase_ampi {
   inline MPI_Request sendRdmaMsg(int t, int sRank, const void* buf, int size, MPI_Datatype type, int destIdx,
                                  int destRank, MPI_Comm destcomm, CMK_REFNUM_TYPE seq, CProxy_ampi arrProxy,
                                  MPI_Request reqIdx) noexcept;
+
+  inline MPI_Request sendRdmaBcastMsg(const void* buf, int size, MPI_Datatype type, MPI_Comm destcomm, int root, MPI_Request reqIdx) noexcept;
   inline bool destLikelyWithinProcess(CProxy_ampi arrProxy, int destIdx, ampi* destPtr) const noexcept {
 #if CMK_MULTICORE
     return true;
@@ -2777,6 +2803,8 @@ class ampi final : public CBase_ampi {
   void imrecv(void* buf, int count, MPI_Datatype datatype, int src, int tag, MPI_Comm comm,
               MPI_Request* request, MPI_Message* message) noexcept;
   void irecvBcast(void *buf, int count, MPI_Datatype type, int src,
+                  MPI_Comm comm, MPI_Request *request) noexcept;
+  void irecvBcastRdma(void *buf, int count, MPI_Datatype type, int src,
                   MPI_Comm comm, MPI_Request *request) noexcept;
   void sendrecv(const void *sbuf, int scount, MPI_Datatype stype, int dest, int stag,
                 void *rbuf, int rcount, MPI_Datatype rtype, int src, int rtag,

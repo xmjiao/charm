@@ -2583,6 +2583,7 @@ void ampi::bcastResult(AmpiMsg* msg) noexcept
   CkAssert(msg->getSeq() != 0);
   int seqIdx = msg->getSeqIdx();
   int n=oorder.put(seqIdx,msg);
+  CmiPrintf("[%d][%d][%d][%d] ampi::bcastResult from srcRank %d, seqIdx=%d, and n value is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, msg->getSrcRank(), seqIdx, n);
   if (n>0) { // This message was in-order
     inorderBcast(msg, false); // inorderBcast() is [nokeep]-aware, unlike inorder()
     if (n>1) { // It enables other, previously out-of-order messages
@@ -2599,6 +2600,7 @@ inline static AmpiRequestList &getReqs() noexcept;
 
 void AmpiRequestList::freeNonPersReq(ampiParent* pptr, int &idx) noexcept {
   if (!reqs[idx]->isPersistent()) {
+    CkPrintf("AmpiRequestList::freeNonPersReq %d [%p]\n", idx, reqs[idx]);
     free(idx, pptr->getDDT());
     idx = MPI_REQUEST_NULL;
   }
@@ -2718,6 +2720,79 @@ void ampi::inorderRdma(char* buf, int size, CMK_REFNUM_TYPE seq, int tag, int sr
   }
 }
 
+void ampi::completedRdmaBcastSend(CkDataMsg *msg) noexcept
+{
+  MSG_ORDER_DEBUG(
+     CkPrintf("[%d] VP %d in completedSend, reqIdx = %d\n",
+              CkMyPe(), parent->thisIndex, reqIdx);
+  )
+  MPI_Request reqIdx;
+
+  reqIdx = CkGetRefNum(msg);
+
+  AmpiRequestList& reqList = getReqs();
+  CmiPrintf("[%d][%d][%d][%d] ampi::completedRdmaBcastSend reqIdx %d and reqList size=%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, reqIdx, reqList.validSize());
+  reqList.print();
+  AmpiRequest& sreq = (*reqList[reqIdx]);
+  sreq.complete = true;
+
+  handleBlockedReq(&sreq);
+  resumeThreadIfReady();
+}
+
+MPI_Request ampi::sendRdmaBcastMsg(const void* buf, int size, MPI_Datatype type,
+                                   MPI_Comm destcomm, int root, MPI_Request reqIdx) noexcept
+{
+  // Set up a SendReq to track completion of the send buffer
+  if (reqIdx == MPI_REQUEST_NULL) {
+    reqIdx = postReq(parent->reqPool.newReq<SendReq>(type, destcomm, getDDT()));
+  }
+  CkCallback completedSendCB(CkIndex_ampi::completedRdmaBcastSend(NULL), thisProxy[thisIndex], true/*inline*/);
+  completedSendCB.setRefnum(reqIdx);
+
+  CMK_REFNUM_TYPE seq = getSeqNo(root, destcomm, MPI_BCAST_TAG);
+
+  CmiPrintf("[%d][%d][%d][%d] ampi::sendRdmaBcastMsg calling bcastResultRdma with seq %d and reqIdx %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, seq, reqIdx);
+  thisProxy.bcastResultRdma(CkSendBuffer(buf, completedSendCB), size, seq, MPI_BCAST_TAG, root);
+  return reqIdx;
+}
+
+void ampi::bcastResultRdma(char *buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank, CkNcpyBufferPost *ncpyPost) noexcept
+{
+
+  MSG_ORDER_DEBUG(
+    CkPrintf("AMPI vp %d bcast rdma arrival: tag=%d, src=%d, comm=%d (seq %d) resumeOnRecv %d\n",
+             thisIndex, tag, srcRank, getComm(), seq, parent->resumeOnRecv);
+  )
+
+  CkAssert(seq != 0);
+
+  int ncpyTag = getSize() * seq + getRank();
+  int seqIdx = COLL_SEQ_IDX;
+  CmiPrintf("[%d][%d][%d][%d] ^^^^^ampi::bcastResultRdma Post EM seq:%d,seqIdx=%d and tag %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, seq, seqIdx, ncpyTag);
+  CkMatchBuffer(ncpyPost, 0, ncpyTag);
+  resumeThreadIfReady();
+}
+
+
+void ampi::bcastResultRdma(char *buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank) noexcept
+{
+  CmiPrintf("[%d][%d][%d][%d] ampi::bcastResultRdma Regular EM seq:%d and tag %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, seq, tag);
+
+  MSG_ORDER_DEBUG(
+    CkPrintf("AMPI vp %d bcast rdma arrival: tag=%d, src=%d, comm=%d (seq %d) resumeOnRecv %d\n",
+             thisIndex, tag, srcRank, getComm(), seq, parent->resumeOnRecv);
+  )
+
+  CkAssert(seq != 0);
+  int seqIdx = COLL_SEQ_IDX;
+  AmpiRequest* req = postedBcastReqs.get(tag, srcRank);
+  if (req) { // receive posted
+    handleBlockedReq(req);
+  }
+  resumeThreadIfReady();
+}
+
 // Callback signaling that the send buffer is now safe to re-use
 void ampi::completedSend(MPI_Request reqIdx, CkNcpyBuffer *srcInfo/*=nullptr*/) noexcept
 {
@@ -2738,6 +2813,7 @@ void ampi::completedSend(MPI_Request reqIdx, CkNcpyBuffer *srcInfo/*=nullptr*/) 
 // Callback signaling that the send buffer is now safe to re-use
 void ampi::completedRdmaSend(CkDataMsg *msg) noexcept
 {
+  //CmiPrintf("[%d][%d][%d][%d] ampi::bcastResultRdma from srcRank %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex);
   // refnum is the index into reqList for this SendReq
   int reqIdx = CkGetRefNum(msg);
   CkNcpyBuffer *srcInfo = (CkNcpyBuffer *)(msg->data);
@@ -3623,12 +3699,34 @@ void ampi::bcast(int root, void* buf, int count, MPI_Datatype type, MPI_Comm des
   MPI_Request req;
 
   if (root==getRank()) {
-    irecvBcast(buf, count, type, root, destcomm, &req);
-    thisProxy.bcastResult(makeBcastMsg(buf, count, type, root, destcomm));
+#if AMPI_RDMA_IMPL
+    irecvBcastRdma(buf, count, type, root, destcomm, &req);
+    CkDDT_DataType *ddt = getDDT()->getType(type);
+    int size = ddt->getSize(count);
+    if(ddt->isContig()) {
+      sendRdmaBcastMsg(buf, size, type, destcomm, root, req);
+      getAmpiParent()->waitWithoutFree(&req, MPI_STATUS_IGNORE);
+      return;
+    }
+    else
+#endif
+      {
+        irecvBcast(buf, count, type, root, destcomm, &req);
+        thisProxy.bcastResult(makeBcastMsg(buf, count, type, root, destcomm));
+      }
   }
   else { // Non-root ranks need to increment the outgoing sequence number for collectives
     oorder.incCollSeqOutgoing();
-    irecvBcast(buf, count, type, root, destcomm, &req);
+#if AMPI_RDMA_IMPL
+    CkDDT_DataType *ddt = getDDT()->getType(type);
+    int size = ddt->getSize(count);
+    if(ddt->isContig()) {
+      irecvBcastRdma(buf, count, type, root, destcomm, &req);
+      return;
+    }
+    else
+#endif
+      irecvBcast(buf, count, type, root, destcomm, &req);
   }
 
   MPI_Wait(&req, MPI_STATUS_IGNORE);
@@ -5854,6 +5952,50 @@ AMPI_API_IMPL(int, MPI_Wait, MPI_Request *request, MPI_Status *sts)
   return MPI_SUCCESS;
 }
 
+CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::waitWithoutFree(MPI_Request *request, MPI_Status *sts) noexcept
+{
+  if(*request == MPI_REQUEST_NULL){
+    clearStatus(sts);
+    return MPI_SUCCESS;
+  }
+  checkRequest(*request);
+  ampiParent* pptr = this;
+  AmpiRequestList& reqs = getReqs();
+
+#if AMPIMSGLOG
+  if(msgLogRead){
+    (*fromPUPer)|pupBytes;
+    PUParray(*fromPUPer, (char *)reqs[*request]->buf, pupBytes);
+    PUParray(*fromPUPer, (char *)sts, sizeof(MPI_Status));
+    return MPI_SUCCESS;
+  }
+#endif
+
+  AMPI_DEBUG("AMPI_Wait request=%d reqs[*request]=%p reqs[*request]->tag=%d &reqs=%p\n",
+             *request, reqs[*request], (int)(reqs[*request]->tag), &reqs);
+  CkAssert(pptr->numBlockedReqs == 0);
+
+  int waitResult = -1;
+    AmpiRequest& waitReq = *reqs[*request];
+    CmiPrintf("[%d][%d][%d][%d] ampiParent::wait reqIdx %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, *request);
+    pptr = waitReq.wait(pptr, sts, &waitResult);
+  reqs = pptr->getReqs();
+
+  CkAssert(pptr->numBlockedReqs == 0);
+  AMPI_DEBUG("AMPI_Wait after calling wait, request=%d reqs[*request]=%p reqs[*request]->tag=%d\n",
+             *request, reqs[*request], (int)(reqs[*request]->tag));
+
+#if AMPIMSGLOG
+  if(msgLogWrite && record_msglog(pptr->thisIndex)){
+    (pptr->pupBytes) = getDDT()->getSize(reqs[*request]->type) * (reqs[*request]->count);
+    (*(pptr->toPUPer))|(pptr->pupBytes);
+    PUParray(*(pptr->toPUPer), (char *)(reqs[*request]->buf), (pptr->pupBytes));
+    PUParray(*(pptr->toPUPer), (char *)sts, sizeof(MPI_Status));
+  }
+#endif
+  return MPI_SUCCESS;
+}
+
 CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::wait(MPI_Request *request, MPI_Status *sts) noexcept
 {
   if(*request == MPI_REQUEST_NULL){
@@ -5880,6 +6022,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::wait(MPI_Request *request, MPI_St
 
   int waitResult = -1;
     AmpiRequest& waitReq = *reqs[*request];
+    CmiPrintf("[%d][%d][%d][%d] ampiParent::wait reqIdx %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, *request);
     pptr = waitReq.wait(pptr, sts, &waitResult);
   reqs = pptr->getReqs();
 
@@ -5896,7 +6039,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::wait(MPI_Request *request, MPI_St
   }
 #endif
 
-
+  CmiPrintf("[%d][%d][%d][%d] ampiParent::wait &&&&7 calling freeNonPersReq with reqIdx:%d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, *request);
   reqs.freeNonPersReq(pptr, *request);
 
   return MPI_SUCCESS;
@@ -7456,6 +7599,33 @@ AMPI_API_IMPL(int, MPI_Irsend, const void *buf, int count, MPI_Datatype type, in
   AMPI_API("AMPI_Irsend", buf, count, type, dest, tag, comm, request);
   return MPI_Isend(buf, count, type, dest, tag, comm, request);
 }
+
+void ampi::irecvBcastRdma(void *buf, int count, MPI_Datatype type, int src,
+                      MPI_Comm comm, MPI_Request *request) noexcept
+{
+  if (isInter()) {
+    src = myComm->getIndexForRemoteRank(src);
+  }
+  AmpiRequestList& reqs = getReqs();
+  IReq *newreq = parent->reqPool.newReq<IReq>(buf, count, type, src, MPI_BCAST_TAG, comm, getDDT());
+  *request = reqs.insert(newreq);
+
+  int ncpyTag = (getAmpiInstance(comm)->getSize()) * oorder.getSeqIncoming(COLL_SEQ_IDX) + getRank();
+  CmiPrintf("[%d][%d][%d][%d] *********ampi::irecvBcastRdma tag %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, ncpyTag);
+  CkPostBuffer(buf, count, ncpyTag);
+
+  //AmpiMsg* msg = unexpectedBcastMsgs.get(MPI_BCAST_TAG, src);
+  //// if msg has already arrived, do the receive right away
+  //if (msg) {
+  //  newreq->receive(this, msg, false);
+  //  delete msg; // never add bcast msgs to AmpiMsgPool because they are nokeep
+  //}
+  //else { // ... otherwise post the receive
+  //  postedBcastReqs.put(newreq);
+  //}
+}
+
+
 
 void ampi::irecvBcast(void *buf, int count, MPI_Datatype type, int src,
                       MPI_Comm comm, MPI_Request *request) noexcept

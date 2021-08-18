@@ -2066,6 +2066,8 @@ void zcPupIssueRgets(CmiUInt8 id, CkLocMgr *locMgr) {
 // PE-level Post method
 void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag) {
 
+  CkPrintf("[%d][%d][%d] CkPostBufferInternal size = %d, tag = %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), destSize, tag);
+
   // check if tag exists in posted req table
   auto iter = CkpvAccess(ncpyPostedReqMap).find(tag);
 
@@ -2129,6 +2131,7 @@ void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag) {
 // PE-level Match method
 void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag) {
 
+  CkPrintf("[%d][%d][%d] CkMatchBuffer index=%d, tag = %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), index, tag);
   post[index].postAsync = true;
 
   // check if tag exists in posted buffer table
