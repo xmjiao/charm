@@ -1328,6 +1328,8 @@ void forwardMessageToPeerNodes(envelope *myMsg, UChar msgType) {
 
 void handleBcastEntryMethodApiCompletion(NcpyOperationInfo *info){
 
+  CmiPrintf("[%d][%d][%d] &&&&&&&&&&&&&&&&&& handleBcastEntryMethodApiCompletion\n", CmiMyPe(), CmiMyNode(), CmiMyRank());
+
 // The following CMK_REG_REQUIRED is only used by the UCX layer. For CMK_REG_REQUIRED
 // layers (GNI, OFI and Verbs), the code simply returns from LrtsInvokeRemoteDeregAckHandler.
 #if CMK_REG_REQUIRED

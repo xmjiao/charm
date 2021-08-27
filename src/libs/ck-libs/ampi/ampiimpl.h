@@ -2707,6 +2707,7 @@ class ampi final : public CBase_ampi {
   inline void handleBlockedReq(AmpiRequest* req) noexcept {
     if (req->isBlocked() && parent->numBlockedReqs != 0) {
       parent->numBlockedReqs--;
+      CmiPrintf("[%d][%d][%d] handleBlockedReq and num blocked req is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), parent->numBlockedReqs);
     }
   }
   inline void resumeThreadIfReady() noexcept {
@@ -2765,7 +2766,7 @@ class ampi final : public CBase_ampi {
   inline MPI_Request sendRdmaMsg(int t, int sRank, const void* buf, int size, MPI_Datatype type, int destIdx,
                                  int destRank, MPI_Comm destcomm, CMK_REFNUM_TYPE seq, CProxy_ampi arrProxy,
                                  MPI_Request reqIdx) noexcept;
-
+  bool bcastUsingRdma(int root, void* buf, int count, MPI_Datatype type, MPI_Comm destcomm, MPI_Request req) noexcept;
   inline MPI_Request sendRdmaBcastMsg(const void* buf, int size, MPI_Datatype type, MPI_Comm destcomm, int root, MPI_Request reqIdx) noexcept;
   inline bool destLikelyWithinProcess(CProxy_ampi arrProxy, int destIdx, ampi* destPtr) const noexcept {
 #if CMK_MULTICORE

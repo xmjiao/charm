@@ -2754,6 +2754,7 @@ MPI_Request ampi::sendRdmaBcastMsg(const void* buf, int size, MPI_Datatype type,
 
   CmiPrintf("[%d][%d][%d][%d] ampi::sendRdmaBcastMsg calling bcastResultRdma with seq %d and reqIdx %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, seq, reqIdx);
   thisProxy.bcastResultRdma(CkSendBuffer(buf, completedSendCB), size, seq, MPI_BCAST_TAG, root);
+  //thisProxy.bcastResultRdma(CkSendBuffer(buf, CkCallback::ignore), size, seq, MPI_BCAST_TAG, root);
   return reqIdx;
 }
 
@@ -2771,7 +2772,7 @@ void ampi::bcastResultRdma(char *buf, int size, CMK_REFNUM_TYPE seq, int tag, in
   int seqIdx = COLL_SEQ_IDX;
   CmiPrintf("[%d][%d][%d][%d] ^^^^^ampi::bcastResultRdma Post EM seq:%d,seqIdx=%d and tag %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, seq, seqIdx, ncpyTag);
   CkMatchBuffer(ncpyPost, 0, ncpyTag);
-  resumeThreadIfReady();
+  //resumeThreadIfReady();
 }
 
 
@@ -2787,8 +2788,10 @@ void ampi::bcastResultRdma(char *buf, int size, CMK_REFNUM_TYPE seq, int tag, in
   CkAssert(seq != 0);
   int seqIdx = COLL_SEQ_IDX;
   AmpiRequest* req = postedBcastReqs.get(tag, srcRank);
-  if (req) { // receive posted
+  if (req && thisIndex != srcRank) { // receive posted
+    CmiPrintf("[%d][%d][%d][%d] handleBlockedReq ^^^^^ ampi::bcastResultRdma Regular EM %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, req->reqIdx);
     handleBlockedReq(req);
+    req->complete=true;
   }
   resumeThreadIfReady();
 }
@@ -3694,37 +3697,40 @@ int ampi::improbe(int tag, int source, MPI_Comm comm, MPI_Status *sts,
   return 0;
 }
 
+bool ampi::bcastUsingRdma(int root, void* buf, int count, MPI_Datatype type, MPI_Comm destcomm, MPI_Request req) noexcept
+{
+  CkDDT_DataType *ddt = getDDT()->getType(type);
+  int size = ddt->getSize(count);
+  if(ddt->isContig()) {
+    irecvBcastRdma(buf, count, type, root, destcomm, &req);
+    if (root==getRank()) {
+      sendRdmaBcastMsg(buf, size, type, destcomm, root, req);
+    } else {
+
+    }
+    //getAmpiParent()->waitWithoutFree(&req, MPI_STATUS_IGNORE);
+    return true;
+  }
+  return false;
+}
+
 void ampi::bcast(int root, void* buf, int count, MPI_Datatype type, MPI_Comm destcomm) noexcept
 {
   MPI_Request req;
 
   if (root==getRank()) {
 #if AMPI_RDMA_IMPL
-    irecvBcastRdma(buf, count, type, root, destcomm, &req);
-    CkDDT_DataType *ddt = getDDT()->getType(type);
-    int size = ddt->getSize(count);
-    if(ddt->isContig()) {
-      sendRdmaBcastMsg(buf, size, type, destcomm, root, req);
-      getAmpiParent()->waitWithoutFree(&req, MPI_STATUS_IGNORE);
-      return;
-    }
-    else
+    if(!bcastUsingRdma(root, buf, count, type, destcomm, req))
 #endif
-      {
-        irecvBcast(buf, count, type, root, destcomm, &req);
-        thisProxy.bcastResult(makeBcastMsg(buf, count, type, root, destcomm));
-      }
-  }
+    {
+      irecvBcast(buf, count, type, root, destcomm, &req);
+      thisProxy.bcastResult(makeBcastMsg(buf, count, type, root, destcomm));
+    }
+}
   else { // Non-root ranks need to increment the outgoing sequence number for collectives
     oorder.incCollSeqOutgoing();
 #if AMPI_RDMA_IMPL
-    CkDDT_DataType *ddt = getDDT()->getType(type);
-    int size = ddt->getSize(count);
-    if(ddt->isContig()) {
-      irecvBcastRdma(buf, count, type, root, destcomm, &req);
-      return;
-    }
-    else
+    if(!bcastUsingRdma(root, buf, count, type, destcomm, req))
 #endif
       irecvBcast(buf, count, type, root, destcomm, &req);
   }
@@ -5482,8 +5488,8 @@ AMPI_API_IMPL(int, MPI_Reduce_scatter_block, const void* sendbuf, void* recvbuf,
 
   std::vector<char> tmpbuf(ptr->getDDT()->getType(datatype)->getSize(count)*size);
 
-  MPI_Reduce(sendbuf, &tmpbuf[0], count*size, datatype, op, AMPI_COLL_SOURCE, comm);
-  MPI_Scatter(&tmpbuf[0], count, datatype, recvbuf, count, datatype, AMPI_COLL_SOURCE, comm);
+MPI_Reduce(sendbuf, &tmpbuf[0], count*size, datatype, op, AMPI_COLL_SOURCE, comm);
+MPI_Scatter(&tmpbuf[0], count, datatype, recvbuf, count, datatype, AMPI_COLL_SOURCE, comm);
 
   return MPI_SUCCESS;
 }
@@ -5790,6 +5796,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* IReq::wait(ampiParent* parent, MPI_Status *st
   // ampi::generic() writes directly to the buffer, so the only thing we do here is wait
 
   while (!complete) {
+    CmiPrintf("[%d][%d][%d] IReq::wait inside while loop %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), reqIdx);
     // parent is updated in case an ampi thread is migrated while waiting for a message
     parent->resumeOnRecv = true;
     parent->numBlockedReqs = 1;
@@ -5806,7 +5813,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* IReq::wait(ampiParent* parent, MPI_Status *st
 
   } // end of while
   parent->resumeOnRecv = false;
-
+  CmiPrintf("[%d][%d][%d][%d] IReq::wait outside while loop %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), reqIdx);
   AMPI_DEBUG("IReq::wait has resumed\n");
 
   if(sts!=MPI_STATUS_IGNORE) {
@@ -5977,7 +5984,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::waitWithoutFree(MPI_Request *requ
 
   int waitResult = -1;
     AmpiRequest& waitReq = *reqs[*request];
-    CmiPrintf("[%d][%d][%d][%d] ampiParent::wait reqIdx %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, *request);
+    CmiPrintf("[%d][%d][%d][%d] ampiParent::waitWithoutFree reqIdx %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, *request);
     pptr = waitReq.wait(pptr, sts, &waitResult);
   reqs = pptr->getReqs();
 
@@ -7612,7 +7619,10 @@ void ampi::irecvBcastRdma(void *buf, int count, MPI_Datatype type, int src,
 
   int ncpyTag = (getAmpiInstance(comm)->getSize()) * oorder.getSeqIncoming(COLL_SEQ_IDX) + getRank();
   CmiPrintf("[%d][%d][%d][%d] *********ampi::irecvBcastRdma tag %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, ncpyTag);
-  CkPostBuffer(buf, count, ncpyTag);
+
+  CkDDT_DataType *ddt = getDDT()->getType(type);
+  int size = ddt->getSize(count);
+  CkPostBuffer(buf, size, ncpyTag);
 
   //AmpiMsg* msg = unexpectedBcastMsgs.get(MPI_BCAST_TAG, src);
   //// if msg has already arrived, do the receive right away
@@ -7621,7 +7631,7 @@ void ampi::irecvBcastRdma(void *buf, int count, MPI_Datatype type, int src,
   //  delete msg; // never add bcast msgs to AmpiMsgPool because they are nokeep
   //}
   //else { // ... otherwise post the receive
-  //  postedBcastReqs.put(newreq);
+  postedBcastReqs.put(newreq);
   //}
 }
 
