@@ -10,7 +10,7 @@
 #include "ampi.h"
 
 //Uncomment for debug print statements
-#define DDTDEBUG(...) //CkPrintf(__VA_ARGS__)
+#define DDTDEBUG(...) CkPrintf(__VA_ARGS__)
 
 /*
  * An MPI basic datatype is a type that corresponds to the basic
@@ -191,6 +191,7 @@ class CkDDT_DataType
   void incRefCount() noexcept {
     CkAssert(refCount > 0);
     if (datatype > AMPI_MAX_PREDEFINED_TYPE) {
+      DDTDEBUG("CkDDT_Datatype::incRefCount() refCount of type %d being incremented to %d\n", datatype, refCount+1);
       refCount++;
     }
   }
@@ -199,6 +200,7 @@ class CkDDT_DataType
     // value and free the type only if it returns 0.
     CkAssert(refCount > 0);
     if (datatype > AMPI_MAX_PREDEFINED_TYPE) {
+      DDTDEBUG("CkDDT_Datatype::decRefCount() refCount of type %d being decremented to %d\n", datatype, refCount-1);
       return --refCount;
     }
     return -1;

@@ -91,14 +91,17 @@ CkDDT::freeType(int index) noexcept
         int count = userTypeTable[idx]->getCount();
         std::vector<int> &baseIndices = static_cast<CkDDT_Struct &>(*userTypeTable[idx]).getBaseIndices();
         for (int i=0; i<count; i++) {
+          DDTDEBUG("CkDDT::freeType for datatype %d (STRUCT), recursively freeing base idx %d\n", index, baseIndices[i]);
           freeType(baseIndices[i]);
         }
       }
       else {
+        DDTDEBUG("CkDDT::freeType for datatype %d (not a STRUCT), freeing base idx %d\n", index, userTypeTable[idx]->getBaseIndex());
         freeType(userTypeTable[idx]->getBaseIndex());
       }
 
       // Free non-primitive type
+      DDTDEBUG("CkDDT::freeType for datatype %d, freeing idx %d\n", index, idx);
       delete userTypeTable[idx];
       if (idx == userTypeTable.size()-1) {
         userTypeTable.pop_back();
