@@ -2741,7 +2741,7 @@ void ampi::completedRdmaBcastSend(CkDataMsg *msg) noexcept
 }
 
 MPI_Request ampi::sendRdmaBcastMsg(const void* buf, int size, MPI_Datatype type,
-                                   MPI_Comm destcomm, int root, MPI_Request reqIdx) noexcept
+                                   MPI_Comm destcomm, int root, MPI_Request reqIdx, bool isInter) noexcept
 {
   // Set up a SendReq to track completion of the send buffer
   if (reqIdx == MPI_REQUEST_NULL) {
@@ -2753,7 +2753,10 @@ MPI_Request ampi::sendRdmaBcastMsg(const void* buf, int size, MPI_Datatype type,
   CMK_REFNUM_TYPE seq = getSeqNo(root, destcomm, MPI_BCAST_TAG);
 
   CmiPrintf("[%d][%d][%d][%d] ampi::sendRdmaBcastMsg calling bcastResultRdma with seq %d and reqIdx %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, seq, reqIdx);
-  thisProxy.bcastResultRdma(CkSendBuffer(buf, completedSendCB), size, seq, MPI_BCAST_TAG, root);
+  if(isInter)
+    remoteProxy.bcastResultRdma(CkSendBuffer(buf, completedSendCB), size, seq, MPI_BCAST_TAG, root);
+  else
+    thisProxy.bcastResultRdma(CkSendBuffer(buf, completedSendCB), size, seq, MPI_BCAST_TAG, root);
   //thisProxy.bcastResultRdma(CkSendBuffer(buf, CkCallback::ignore), size, seq, MPI_BCAST_TAG, root);
   return reqIdx;
 }
@@ -2772,7 +2775,7 @@ void ampi::bcastResultRdma(char *buf, int size, CMK_REFNUM_TYPE seq, int tag, in
   int seqIdx = COLL_SEQ_IDX;
   CmiPrintf("[%d][%d][%d][%d] ^^^^^ampi::bcastResultRdma Post EM seq:%d,seqIdx=%d and tag %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, seq, seqIdx, ncpyTag);
   CkMatchBuffer(ncpyPost, 0, ncpyTag);
-  //resumeThreadIfReady();
+  resumeThreadIfReady();
 }
 
 
@@ -3718,69 +3721,133 @@ void ampi::bcast(int root, void* buf, int count, MPI_Datatype type, MPI_Comm des
 {
   MPI_Request req;
 
-  if (root==getRank()) {
 #if AMPI_RDMA_IMPL
-    if(!bcastUsingRdma(root, buf, count, type, destcomm, req))
+  CkDDT_DataType *ddt = getDDT()->getType(type);
+  int size = ddt->getSize(count);
+  if(ddt->isContig()) {
+    if (root==getRank()) {
+      irecvBcastRdma(buf, count, type, root, destcomm, &req);
+      sendRdmaBcastMsg(buf, size, type, destcomm, root, req);
+    } else { // Non-root ranks need to increment the outgoing sequence number for collectives
+      oorder.incCollSeqOutgoing();
+      irecvBcastRdma(buf, count, type, root, destcomm, &req);
+    }
+  } else
 #endif
-    {
+  {
+    if (root==getRank()) {
       irecvBcast(buf, count, type, root, destcomm, &req);
       thisProxy.bcastResult(makeBcastMsg(buf, count, type, root, destcomm));
-    }
-}
-  else { // Non-root ranks need to increment the outgoing sequence number for collectives
-    oorder.incCollSeqOutgoing();
-#if AMPI_RDMA_IMPL
-    if(!bcastUsingRdma(root, buf, count, type, destcomm, req))
-#endif
+    } else { // Non-root ranks need to increment the outgoing sequence number for collectives
+      oorder.incCollSeqOutgoing();
       irecvBcast(buf, count, type, root, destcomm, &req);
+    }
   }
-
   MPI_Wait(&req, MPI_STATUS_IGNORE);
 }
 
 int ampi::intercomm_bcast(int root, void* buf, int count, MPI_Datatype type, MPI_Comm intercomm) noexcept
 {
-  if (root==MPI_ROOT) {
-    remoteProxy.bcastResult(makeBcastMsg(buf, count, type, getRank(), intercomm));
-  }
-  else { // Non-root ranks need to increment the outgoing sequence number for collectives
-    oorder.incCollSeqOutgoing();
-  }
+#if AMPI_RDMA_IMPL
+  CkDDT_DataType *ddt = getDDT()->getType(type);
+  int size = ddt->getSize(count);
+  if(ddt->isContig()) {
+    if (root==MPI_ROOT) {
+      //irecvBcastRdma(buf, count, type, root, intercomm, &req);
+      MPI_Request req;
+      req = sendRdmaBcastMsg(buf, size, type, intercomm, getRank(), MPI_REQUEST_NULL, true);
+      MPI_Wait(&req, MPI_STATUS_IGNORE);
+      //CMK_REFNUM_TYPE seq = getSeqNo(getRank(), intercomm, MPI_BCAST_TAG);
+      //remoteProxy.bcastResultRdma(CkSendBuffer(buf, CkCallback::ignore), size, seq, MPI_BCAST_TAG, getRank());
+    } else { // Non-root ranks need to increment the outgoing sequence number for collectives
+      oorder.incCollSeqOutgoing();
+      if (root!=MPI_PROC_NULL) {
+        // remote group ranks
+        MPI_Request req;
+        irecvBcastRdma(buf, count, type, root, intercomm, &req);
+        MPI_Wait(&req, MPI_STATUS_IGNORE);
+      }
+    }
+  } else
+#endif
+  {
+    if (root==MPI_ROOT) {
+      remoteProxy.bcastResult(makeBcastMsg(buf, count, type, getRank(), intercomm));
+    }
+    else { // Non-root ranks need to increment the outgoing sequence number for collectives
+      oorder.incCollSeqOutgoing();
+    }
 
-  if (root!=MPI_PROC_NULL && root!=MPI_ROOT) {
-    // remote group ranks
-    MPI_Request req;
-    irecvBcast(buf, count, type, root, intercomm, &req);
-    MPI_Wait(&req, MPI_STATUS_IGNORE);
+    if (root!=MPI_PROC_NULL && root!=MPI_ROOT) {
+      // remote group ranks
+      MPI_Request req;
+      irecvBcast(buf, count, type, root, intercomm, &req);
+      MPI_Wait(&req, MPI_STATUS_IGNORE);
+    }
   }
   return MPI_SUCCESS;
 }
 
 void ampi::ibcast(int root, void* buf, int count, MPI_Datatype type, MPI_Comm destcomm, MPI_Request* request) noexcept
 {
-  if (root==getRank()) {
-    thisProxy.bcastResult(makeBcastMsg(buf, count, type, getRank(), destcomm));
+#if AMPI_RDMA_IMPL
+  CkDDT_DataType *ddt = getDDT()->getType(type);
+  int size = ddt->getSize(count);
+  if(ddt->isContig()) {
+    if (root==getRank()) {
+      irecvBcastRdma(buf, count, type, root, destcomm, request);
+      sendRdmaBcastMsg(buf, size, type, destcomm, root, *request);
+    } else { // Non-root ranks need to increment the outgoing sequence number for collectives
+      oorder.incCollSeqOutgoing();
+      irecvBcastRdma(buf, count, type, root, destcomm, request);
+    }
+  } else
+#endif
+  {
+    if (root==getRank())
+      thisProxy.bcastResult(makeBcastMsg(buf, count, type, getRank(), destcomm));
+    else // Non-root ranks need to increment the outgoing sequence number for collectives
+      oorder.incCollSeqOutgoing();
+    irecvBcast(buf, count, type, root, destcomm, request);
   }
-  else { // Non-root ranks need to increment the outgoing sequence number for collectives
-    oorder.incCollSeqOutgoing();
-  }
-
-  // call irecv to post an IReq and check for any pending messages
-  irecvBcast(buf, count, type, root, destcomm, request);
 }
 
 int ampi::intercomm_ibcast(int root, void* buf, int count, MPI_Datatype type, MPI_Comm intercomm, MPI_Request *request) noexcept
 {
-  if (root==MPI_ROOT) {
-    remoteProxy.bcastResult(makeBcastMsg(buf, count, type, getRank(), intercomm));
-  }
-  else { // Non-root ranks need to increment the outgoing sequence number for collectives
-    oorder.incCollSeqOutgoing();
-  }
+#if AMPI_RDMA_IMPL
+  CkDDT_DataType *ddt = getDDT()->getType(type);
+  int size = ddt->getSize(count);
+  if(ddt->isContig()) {
+    if (root==MPI_ROOT) {
+      //irecvBcastRdma(buf, count, type, root, intercomm, &req);
+      MPI_Request req;
+      req = sendRdmaBcastMsg(buf, size, type, intercomm, getRank(), MPI_REQUEST_NULL, true);
+      //MPI_Wait(&req, MPI_STATUS_IGNORE);
+      //CMK_REFNUM_TYPE seq = getSeqNo(getRank(), intercomm, MPI_BCAST_TAG);
+      //remoteProxy.bcastResultRdma(CkSendBuffer(buf, CkCallback::ignore), size, seq, MPI_BCAST_TAG, getRank());
+    } else { // Non-root ranks need to increment the outgoing sequence number for collectives
+      oorder.incCollSeqOutgoing();
+      if (root!=MPI_PROC_NULL) {
+        // remote group ranks
+        //MPI_Request req;
+        irecvBcastRdma(buf, count, type, root, intercomm, &req);
+        //MPI_Wait(&req, MPI_STATUS_IGNORE);
+      }
+    }
+  } else
+#endif
+  {
+    if (root==MPI_ROOT) {
+      remoteProxy.bcastResult(makeBcastMsg(buf, count, type, getRank(), intercomm));
+    }
+    else { // Non-root ranks need to increment the outgoing sequence number for collectives
+      oorder.incCollSeqOutgoing();
+    }
 
-  if (root!=MPI_PROC_NULL && root!=MPI_ROOT) {
-    // call irecv to post IReq and process pending messages
-    irecvBcast(buf, count, type, root, intercomm, request);
+    if (root!=MPI_PROC_NULL && root!=MPI_ROOT) {
+      // call irecv to post IReq and process pending messages
+      irecvBcast(buf, count, type, root, intercomm, request);
+    }
   }
   return MPI_SUCCESS;
 }
@@ -7618,7 +7685,7 @@ void ampi::irecvBcastRdma(void *buf, int count, MPI_Datatype type, int src,
   *request = reqs.insert(newreq);
 
   int ncpyTag = (getAmpiInstance(comm)->getSize()) * oorder.getSeqIncoming(COLL_SEQ_IDX) + getRank();
-  CmiPrintf("[%d][%d][%d][%d] *********ampi::irecvBcastRdma tag %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, ncpyTag);
+  CmiPrintf("[%d][%d][%d][%d] *********ampi::irecvBcastRdma tag %d, request = %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, ncpyTag);
 
   CkDDT_DataType *ddt = getDDT()->getType(type);
   int size = ddt->getSize(count);

@@ -2767,7 +2767,7 @@ class ampi final : public CBase_ampi {
                                  int destRank, MPI_Comm destcomm, CMK_REFNUM_TYPE seq, CProxy_ampi arrProxy,
                                  MPI_Request reqIdx) noexcept;
   bool bcastUsingRdma(int root, void* buf, int count, MPI_Datatype type, MPI_Comm destcomm, MPI_Request req) noexcept;
-  inline MPI_Request sendRdmaBcastMsg(const void* buf, int size, MPI_Datatype type, MPI_Comm destcomm, int root, MPI_Request reqIdx) noexcept;
+  inline MPI_Request sendRdmaBcastMsg(const void* buf, int size, MPI_Datatype type, MPI_Comm destcomm, int root, MPI_Request reqIdx, bool isInter=false) noexcept;
   inline bool destLikelyWithinProcess(CProxy_ampi arrProxy, int destIdx, ampi* destPtr) const noexcept {
 #if CMK_MULTICORE
     return true;
@@ -2779,6 +2779,15 @@ class ampi final : public CBase_ampi {
 #else // non-SMP
     return (destPtr != NULL);
 #endif
+  }
+  inline bool isBcastRdma(MPI_Datatype type, int count) {
+    CkDDT_DataType *ddt = getDDT()->getType(type);
+    int size = ddt->getSize(count);
+    //TODO:Add condition for size check
+    if(ddt->isContig()) {
+      return true;
+    }
+    return false;
   }
   inline MPI_Request delesend(int t, int s, const void* buf, int count, MPI_Datatype type, int rank,
                               MPI_Comm destcomm, CProxy_ampi arrproxy, AmpiSendType sendType, MPI_Request req) noexcept;
