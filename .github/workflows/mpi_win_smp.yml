@@ -25,7 +25,7 @@ jobs:
         wget 'https://download.microsoft.com/download/B/2/E/B2EB83FE-98C2-4156-834A-E1711E6884FB/MSMpiSetup.exe'
         wget 'https://download.microsoft.com/download/B/2/E/B2EB83FE-98C2-4156-834A-E1711E6884FB/msmpisdk.msi'
         ./MSMpiSetup.exe -unattend
-        ./msmpisdk.msi -passive
+        msiexec.exe -i msmpisdk.msi -passive
 
     - name: build
       run: |
