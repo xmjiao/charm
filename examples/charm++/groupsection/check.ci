@@ -2,7 +2,6 @@ mainmodule check {
 
 	readonly CProxy_Main mainProxy;
 	readonly CProxy_Check checkGroup;
-	readonly CkGroupID mCastGrpId;
 
 	//message used to send particles to computes
 	message sectionBcastMsg;
@@ -15,6 +14,8 @@ mainmodule check {
 	group Check {
 		entry Check();
 		entry void createSection();
+		entry [reductiontarget] void repeat(int k);
 		entry void recvMsg(sectionBcastMsg *msg);
+		entry void finishMsg(sectionBcastMsg *msg);
 	};
 };
