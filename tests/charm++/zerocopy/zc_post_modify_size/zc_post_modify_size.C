@@ -7,6 +7,7 @@ CProxy_arr arrProxy;
 CProxy_grp grpProxy;
 CProxy_nodegrp ngProxy;
 CProxy_tester chareProxy;
+int arrSize;
 
 void assignValuesToIndex(int *arr, int size);
 void assignValuesToConstant(int *arr, int size, int constantVal);
@@ -18,8 +19,9 @@ class main : public CBase_main {
     main(CkArgMsg *m) {
       delete m;
 
+      arrSize = CkNumPes() * NUM_ELEMENTS_PER_PE;
       // Create a chare array
-      arrProxy = CProxy_arr::ckNew(CkNumPes() * NUM_ELEMENTS_PER_PE);
+      arrProxy = CProxy_arr::ckNew(arrSize);
 
       // Create a group
       grpProxy = CProxy_grp::ckNew();
@@ -50,13 +52,14 @@ class tester : public CBase_tester {
     }
 
     void p2pDone() {
-      if(++counter == 3) {
+      if(++counter == 1) {
         counter = 0;
 
+        CkExit();
         // Test bcast sends
-        arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, true);
-        grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, true);
-        ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, true);
+        //arrProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, true);
+        //grpProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, true);
+        //ngProxy.recv_zerocopy(CkSendBuffer(srcBuffer), SIZE, true);
       }
     }
 
@@ -78,17 +81,19 @@ class arr : public CBase_arr {
       assignValuesToIndex(destBuffer, SIZE);
     }
 
-    void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
-      buffer = destBuffer;
+    void recv_zerocopy(int *buffer, size_t size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
+      CkMatchBuffer(ncpyPost, 0, thisIndex);
+
       if(isBcast) {
-        size = SIZE/2;
+        CkPostBuffer(destBuffer, SIZE/2, thisIndex);
       } else {
-        size = SIZE/4;
+        CkPostBuffer(destBuffer, SIZE/4, thisIndex);
       }
     }
 
     void recv_zerocopy(int *buffer, size_t size, bool isBcast) {
       if(isBcast) {
+        CkPrintf("[%d][%d][%d] isBcast received size is %d, expected %d\n", CkMyPe(), CkMyNode(), CkMyRank(), size, SIZE/2);
         verifyValuesWithConstant(destBuffer, SIZE/2, CONSTANT);
         verifyValuesWithIndex(destBuffer, SIZE, SIZE/2);
 
@@ -97,6 +102,7 @@ class arr : public CBase_arr {
 
         delete [] destBuffer;
       } else {
+        CkPrintf("[%d][%d][%d] is regular received size is %d, expected %d\n", CkMyPe(), CkMyNode(), CkMyRank(), size, SIZE/4);
         verifyValuesWithConstant(destBuffer, SIZE/4, CONSTANT);
         verifyValuesWithIndex(destBuffer, SIZE, SIZE/4);
 
@@ -113,16 +119,19 @@ class grp : public CBase_grp {
       assignValuesToIndex(destBuffer, SIZE);
     }
 
-    void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
-      buffer = destBuffer;
+    void recv_zerocopy(int *buffer, size_t size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
+      CkPrintf("[%d][%d][%d] isBcast=%d received size is %d pointer is %p, other pointer is %p\n", CkMyPe(), CkMyNode(), CkMyRank(), isBcast, size, buffer, destBuffer);
+      CkMatchBuffer(ncpyPost, 0, arrSize + thisIndex);
+
       if(isBcast) {
-        size = SIZE/2;
+        CkPostBuffer(destBuffer, SIZE/2, arrSize + thisIndex);
       } else {
-        size = SIZE/4;
+        CkPostBuffer(destBuffer, SIZE/4, arrSize + thisIndex);
       }
     }
 
     void recv_zerocopy(int *buffer, size_t size, bool isBcast) {
+      CkPrintf("[%d][%d][%d] isBcast=%d received size is %d pointer is %p, other pointer is %p\n", CkMyPe(), CkMyNode(), CkMyRank(), isBcast, size, buffer, destBuffer);
       if(isBcast) {
         verifyValuesWithConstant(destBuffer, SIZE/2, CONSTANT);
         verifyValuesWithIndex(destBuffer, SIZE, SIZE/2);
@@ -132,6 +141,7 @@ class grp : public CBase_grp {
 
         delete [] destBuffer;
       } else {
+        CkPrintf("[%d][%d][%d] isP2p received size is %d, expected %d\n", CkMyPe(), CkMyNode(), CkMyRank(), size, SIZE/4);
         verifyValuesWithConstant(destBuffer, SIZE/4, CONSTANT);
         verifyValuesWithIndex(destBuffer, SIZE, SIZE/4);
 
@@ -147,12 +157,14 @@ class nodegrp : public CBase_nodegrp {
       destBuffer = new int[SIZE/2];
       assignValuesToIndex(destBuffer, SIZE/2);
     }
-    void recv_zerocopy(int *&buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
-      buffer = destBuffer;
+
+    void recv_zerocopy(int *buffer, size_t &size, bool isBcast, CkNcpyBufferPost *ncpyPost) {
+      CkMatchBuffer(ncpyPost, 0, arrSize + CkNumPes() + thisIndex);
+
       if(isBcast) {
-        size = SIZE/2;
+        CkPostBuffer(destBuffer, SIZE/2, arrSize + CkNumPes() + thisIndex);
       } else {
-        size = SIZE/4;
+        CkPostBuffer(destBuffer, SIZE/4, arrSize + CkNumPes() + thisIndex);
       }
     }
 
