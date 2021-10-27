@@ -126,6 +126,7 @@ struct NcpyEmInfo{
   std::vector<int> *tagArray;
 
   NcpyBcastRecvPeerAckInfo *peerAckInfo;
+  void *ghostBuffer;
 
 };
 
@@ -260,7 +261,7 @@ void CkUnpackRdmaPtrs(char *msgBuf);
 
 // Determine the number of ncpy ops and the sum of the ncpy buffer sizes
 // from the metadata message
-void getRdmaNumopsAndBufsize(envelope *env, int &numops, int &bufsize, int &rootNode);
+void getRdmaParams(envelope *env, int &numops, int &bufsize, int &rootNode);
 
 // Ack handler function for the nocopy EM API
 void CkRdmaEMAckHandler(int destPe, void *ack);
@@ -332,6 +333,7 @@ struct NcpyBcastInterimAckInfo : public NcpyBcastAckInfo {
   bool isRecv;
   bool isArray;
   NcpyEmInfo *ncpyEmInfo;
+  void *ghostBuffer;
 };
 
 // Method called on the bcast source to store some information for ack handling
@@ -349,7 +351,7 @@ void CkReplaceSourcePtrsInBcastMsg(envelope *env, NcpyBcastInterimAckInfo *bcast
 const void *getParentBcastAckInfo(void *msg, int &srcPe);
 
 // Allocate a NcpyBcastInterimAckInfo and return the pointer
-NcpyBcastInterimAckInfo *allocateInterimNodeAckObj(envelope *myEnv, envelope *myChildEnv, int pe);
+NcpyBcastInterimAckInfo *allocateInterimNodeAckObj(envelope *myEnv, envelope *myChildEnv, void *ghostBuffer, int pe);
 
 void forwardMessageToChildNodes(envelope *myChildrenMsg, UChar msgType);
 
@@ -439,6 +441,8 @@ void sendRecvDoneMsgToPeers(envelope *env, CkArray *mgr);
 
 /***************************** Other Util Methods ****************************/
 
+CmiSpanningTreeInfo* getSpanningTreeInfo(int startNode);
+
 // Function declaration for EM Ncpy Ack handler initialization
 void initEMNcpyAckHandler(void);
 
@@ -491,7 +495,7 @@ void CkRdmaZCPupCustomHandler(void *ack);
 
 void _ncpyAckHandler(ncpyHandlerMsg *msg);
 
-void setNcpyEmInfo(NcpyEmInfo *ref, envelope *env, int &numops, void *forwardMsg, ncpyEmApiMode emMode);
+void setNcpyEmInfo(NcpyEmInfo *ref, envelope *env, int &numops, void *ghostBuffer, void *forwardMsg, ncpyEmApiMode emMode);
 
 // Struct is used to store posted buffer information
 // Information passed in a CkPostBuffer call is used to construct CkPostedBuffer
@@ -584,5 +588,7 @@ void CkPostNodeBuffer(T *buffer, size_t size, int tag) {
   void *destBuffer = (void *)buffer;
   CkPostNodeBufferInternal(destBuffer, destSize, tag);
 }
+
+void CkRdmaIssueRgetsNoElem(envelope *env, int numops, int bufsize, int rootNode);
 
 #endif

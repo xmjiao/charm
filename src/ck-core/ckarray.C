@@ -1693,17 +1693,39 @@ void CkArray::recvBroadcast(CkMessage* m)
     bool doFree = true;  // free it since all ops are done
     broadcaster->deliver(msg, (ArrayElement*)localElemVec[0], doFree);
   }
-  else if (zc_msgtype == CMK_ZC_BCAST_RECV_MSG && len > 0)
+  else if (zc_msgtype == CMK_ZC_BCAST_RECV_MSG)
   {
-    // Message is used by the receiver to post the receiver buffer
-    // Initial metadata message, send only to the first element, other elements
-    // are sent CMK_ZC_BCAST_RECV_DONE_MSG after rget completion
 
-    // do not free since msg will be reused to send buffers to peers, msg will
-    // be finally freed by the first element in the
-    // CMK_ZC_BCAST_RECV_ALL_DONE_MSG branch
-    bool doFree = false;
-    broadcaster->deliver(msg, (ArrayElement*)localElemVec[0], doFree);
+      CmiSpanningTreeInfo *t = NULL;
+      if(_topoTree == NULL) CkAbort("CkRdmaIssueRgets:: topo tree has not been calculated \n");
+
+      int numops = 0, bufSize = 0, rootNode = -1;
+      getRdmaParams(env, numops, bufSize, rootNode);
+      t = getSpanningTreeInfo(rootNode);
+
+    if(len == 0) {
+      CkPrintf("[%d][%d][%d] No array element found =================== my parent is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), t->parent);
+
+      // non root nodes that have either 1 or more children or 1 or more peers
+      if(t->parent != -1 && (t->child_count != 0 || CmiMyNodeSize() > 1)) {
+        CkRdmaIssueRgetsNoElem(env, numops, bufSize, rootNode);
+      } else {
+        // Send a message to the parent saying I'm done
+        sendAckMsgToParent(env);
+      }
+    } else {
+
+      CkPrintf("[%d][%d][%d] Array element found ^^^^^^^^^^^^^^^^^^ my parent is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), t->parent);
+      // Message is used by the receiver to post the receiver buffer
+      // Initial metadata message, send only to the first element, other elements
+      // are sent CMK_ZC_BCAST_RECV_DONE_MSG after rget completion
+
+      // do not free since msg will be reused to send buffers to peers, msg will
+      // be finally freed by the first element in the
+      // CMK_ZC_BCAST_RECV_ALL_DONE_MSG branch
+      bool doFree = false;
+      broadcaster->deliver(msg, (ArrayElement*)localElemVec[0], doFree);
+   }
   }
   else
   {
