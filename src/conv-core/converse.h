@@ -1141,10 +1141,16 @@ typedef void (*CmiStartFn)(int argc, char **argv);
   @addtogroup ConverseScheduler
   @{
 */
-CpvExtern(int, _ccd_numchecks);
 extern void  CcdCallBacks(void);
-#define CsdPeriodic() do{ if (CpvAccess(_ccd_numchecks)-- <= 0) CcdCallBacks(); } while(0)
+extern int  CcdNumPeriodic(void);
+#if CSD_NO_PERIODIC
+#define CsdPeriodic()
+#define CsdResetPeriodic()
+#else
+CpvExtern(int, _ccd_numchecks);
+#define CsdPeriodic() do{ if (CcdNumPeriodic() > 0 && CpvAccess(_ccd_numchecks)-- <= 0) CcdCallBacks(); } while(0)
 #define CsdResetPeriodic()    CpvAccess(_ccd_numchecks) = 0;
+#endif
 
 extern void  CsdEndIdle(void);
 extern void  CsdStillIdle(void);
@@ -1879,7 +1885,7 @@ int CcdCallOnConditionOnPE(int condnum, CcdVoidFn fnp, void *arg, int pe);
 int CcdCallOnConditionKeepOnPE(int condnum, CcdVoidFn fnp, void *arg, int pe);
 void CcdCancelCallOnCondition(int condnum, int idx);
 void CcdCancelCallOnConditionKeep(int condnum, int idx);
-double CcdRaiseCondition(int condnum);
+void CcdRaiseCondition(int condnum);
 double CcdSetResolution(double newResolution);
 double CcdResetResolution(void);
 double CcdIncreaseResolution(double newResolution);

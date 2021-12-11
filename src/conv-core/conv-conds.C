@@ -33,7 +33,7 @@ struct ccd_callback {
  */
 struct ccd_cblist {
   std::deque<ccd_callback> elems{};
-  unsigned char flag{};
+  bool flag = false;
 };
 
 
@@ -101,13 +101,13 @@ static void call_cblist_keep(const ccd_cblist & l, double curWallTime)
  */
 static void call_cblist_remove(ccd_cblist & l, double curWallTime)
 {
-  /* reentrant */
-  if (l.flag)
-    return;
-  l.flag = 1;
-
   // save the length in case callbacks are added during execution
   const size_t len = l.elems.size();
+
+  /* reentrant */
+  if (len == 0 || l.flag)
+    return;
+  l.flag = true;
 
   // we must iterate this way because insertion invalidates deque iterators
   // i < len is correct. after i==0, unsigned underflow will wrap to SIZE_MAX
@@ -121,7 +121,7 @@ static void call_cblist_remove(ccd_cblist & l, double curWallTime)
 
   remove_n_elems(l, len);
 
-  l.flag = 0;
+  l.flag = false;
 }
 
 
@@ -186,6 +186,14 @@ struct ccd_heap_elem {
 
 /** time-scheduled callbacks */
 CpvStaticDeclare(std::priority_queue<ccd_heap_elem>, ccd_heap);
+
+/**
+ * Returns the number of periodic callbacks currently registered.
+ */
+int CcdNumPeriodic()
+{
+  return CpvAccess(ccd_heap).size();
+}
 
 
 
@@ -345,13 +353,16 @@ void CcdCallFnAfter(CcdVoidFn fnp, void *arg, double deltaT)
  * Raise a condition causing all registered callbacks corresponding to 
  * that condition to be triggered
  */
-double CcdRaiseCondition(int condnum)
+void CcdRaiseCondition(int condnum)
 {
   CmiAssert(condnum < MAXNUMCONDS);
-  double curWallTime=CmiWallTimer();
-  call_cblist_remove(CpvAccess(conds).condcb[condnum], curWallTime);
-  call_cblist_keep(CpvAccess(conds).condcb_keep[condnum], curWallTime);
-  return curWallTime;
+  ccd_cblist &condcb = CpvAccess(conds).condcb[condnum];
+  ccd_cblist &condcb_keep = CpvAccess(conds).condcb_keep[condnum];
+  if (!condcb.elems.empty() || !condcb_keep.elems.empty()) {
+    double curWallTime = CmiWallTimer();
+    call_cblist_remove(condcb, curWallTime);
+    call_cblist_keep(condcb_keep, curWallTime);
+  }
 }
 
 

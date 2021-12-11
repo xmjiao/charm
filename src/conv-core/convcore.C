@@ -1632,17 +1632,18 @@ void CsdBeginIdle(void)
 #else
   CpvAccess(cmiMyPeIdle) = 1;
 #endif // CMK_SMP
-  double curWallTime = CcdRaiseCondition(CcdPROCESSOR_BEGIN_IDLE) ;
+  CcdRaiseCondition(CcdPROCESSOR_BEGIN_IDLE);
 #if CMK_ERROR_CHECKING
-  CpvAccess(idleBeginWalltime) = curWallTime;
+  CpvAccess(idleBeginWalltime) = CmiWallTimer();
 #endif
 }
 
 void CsdStillIdle(void)
 {
-  double curWallTime = CcdRaiseCondition(CcdPROCESSOR_STILL_IDLE);
+  CcdRaiseCondition(CcdPROCESSOR_STILL_IDLE);
 
 #if CMK_ERROR_CHECKING
+  double curWallTime = CmiWallTimer();
   if(curWallTime - CpvAccess(idleBeginWalltime) > longIdleThreshold) {
     curWallTime = CcdRaiseCondition(CcdPROCESSOR_LONG_IDLE); // Invoke LONG_IDLE ccd callbacks
     CpvAccess(idleBeginWalltime) = curWallTime; // Reset idle timer
@@ -1946,9 +1947,7 @@ void CsdScheduleForever(void)
     } else { /*No message available-- go (or remain) idle*/
       SCHEDULE_IDLE
     }
-#if !CSD_NO_PERIODIC
     CsdPeriodic();
-#endif
   }
 }
 int CsdScheduleCount(int maxmsgs)
@@ -1967,9 +1966,7 @@ int CsdScheduleCount(int maxmsgs)
     } else { /*No message available-- go (or remain) idle*/
       SCHEDULE_IDLE
     }
-#if !CSD_NO_PERIODIC
     CsdPeriodic();
-#endif
   }
   return maxmsgs;
 }
@@ -1979,9 +1976,7 @@ void CsdSchedulePoll(void)
   SCHEDULE_TOP
   while (1)
   {
-#if !CSD_NO_PERIODIC
 	CsdPeriodic();
-#endif
         /*CmiMachineProgressImpl(); ??? */
 	if (NULL!=(msg = CsdNextMessage(&state)))
 	{
@@ -2013,9 +2008,7 @@ void CmiDeliverSpecificMsg(int handler)
  
   side = 0;
   while (1) {
-#if !CSD_NO_PERIODIC
     CsdPeriodic();
-#endif
     side ^= 1;
     if (side) msg = (int *)CmiGetNonLocal();
     else      msg = (int *)CdsFifo_Dequeue(localqueue);
