@@ -4,6 +4,7 @@
 
 CProxy_Main mainProxy;
 int bufferSize;
+int arrSize;
 
 template<class T>
 void assignValues(T *&arr, int size){
@@ -27,9 +28,9 @@ class Main : public CBase_Main{
       // print error message
       CkAbort("Usage: ./simpleBcastPost <array-size>");
     } else if(m->argc == 2 ) {
-      size = atoi(m->argv[1]);
+      arrSize = atoi(m->argv[1]);
     } else {
-      size = CkNumPes() * 3; // default with 10 chare array elements per pe
+      arrSize = CkNumPes() * 10; // default with 10 chare array elements per pe
     }
 
     delete m;
@@ -43,7 +44,7 @@ class Main : public CBase_Main{
     assignValues(buffer, bufferSize);
 
     // Create a chare array
-    CProxy_zcArray arrProxy = CProxy_zcArray::ckNew(size);
+    CProxy_zcArray arrProxy = CProxy_zcArray::ckNew(arrSize);
 
     // Create a group
     CProxy_zcGroup grpProxy = CProxy_zcGroup::ckNew();
@@ -52,7 +53,7 @@ class Main : public CBase_Main{
     CProxy_zcNodegroup ngrpProxy = CProxy_zcNodegroup::ckNew();
 
     // create a callback method
-    int idx_zerocopySent = CkIndex_Main::zerocopySent(NULL);
+    int idx_zerocopySent = CkIndex_Main::zerocopySent();
     CkCallback cb = CkCallback(idx_zerocopySent, thisProxy);
 
     CkCallback doneCb = CkCallback(CkReductionTarget(Main, done), thisProxy);
@@ -69,10 +70,9 @@ class Main : public CBase_Main{
     ngrpProxy.recvLargeArray(CkSendBuffer(buffer, cb), bufferSize, doneCb);
   }
 
-  void zerocopySent(CkDataMsg *m) {
+  void zerocopySent() {
     CkPrintf("[%d][%d][%d] Source callback invoked\n", CkMyPe(), CkMyNode(), CmiMyRank());
     done();
-    delete m;
   }
 
   void done() {
@@ -93,9 +93,10 @@ class zcArray : public CBase_zcArray {
     DEBUG(CkPrintf("[%d][%d][%d][%d] Array element: constructed and allocated buffer is %p\n", CkMyPe(), CkMyNode(), CmiMyRank(), thisIndex, myBuffer);)
   }
 
-  void recvLargeArray(int *&ptr1, int &n1, CkCallback doneCb, CkNcpyBufferPost *) {
+  void recvLargeArray(int *ptr1, int n1, CkCallback doneCb, CkNcpyBufferPost *ncpyPost) {
     DEBUG(CkPrintf("[%d][%d][%d][%d] Array element: recvLargeArray Post \n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex);)
-    ptr1 = myBuffer;
+    CkPostBuffer(myBuffer, n1, thisIndex);
+    CkMatchBuffer(ncpyPost, 0, thisIndex);
     CkAssert(n1 == bufferSize);
     DEBUG(CkPrintf("[%d][%d][%d][%d] Array element: recvLargeArray Post done posted buffer is %p and size is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), thisIndex, myBuffer, bufferSize);)
   }
@@ -115,9 +116,10 @@ class zcGroup : public CBase_zcGroup {
     DEBUG(CkPrintf("[%d][%d][%d] Group: constructed and allocated buffer is %p\n", CkMyPe(), CkMyNode(), CmiMyRank(), myBuffer);)
   }
 
-  void recvLargeArray(int *&ptr1, int &n1, CkCallback doneCb, CkNcpyBufferPost *) {
+  void recvLargeArray(int *ptr1, int n1, CkCallback doneCb, CkNcpyBufferPost *ncpyPost) {
     DEBUG(CkPrintf("[%d][%d][%d] Group: recvLargeArray Post \n", CmiMyPe(), CmiMyNode(), CmiMyRank());)
-    ptr1 = myBuffer;
+    CkPostBuffer(myBuffer, n1, arrSize + thisIndex);
+    CkMatchBuffer(ncpyPost, 0, arrSize + thisIndex);
     CkAssert(n1 == bufferSize);
     DEBUG(CkPrintf("[%d][%d][%d] Group: recvLargeArray Post done posted buffer is %p and size is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), myBuffer, bufferSize);)
   }
@@ -137,9 +139,10 @@ class zcNodegroup : public CBase_zcNodegroup {
     DEBUG(CkPrintf("[%d][%d][%d] Nodegroup: constructed and allocated buffer is %p\n", CkMyPe(), CkMyNode(), CmiMyRank(), myBuffer);)
   }
 
-  void recvLargeArray(int *&ptr1, int &n1, CkCallback doneCb, CkNcpyBufferPost *) {
+  void recvLargeArray(int *ptr1, int n1, CkCallback doneCb, CkNcpyBufferPost *ncpyPost) {
     DEBUG(CkPrintf("[%d][%d][%d] Nodegroup: recvLargeArray Post \n", CmiMyPe(), CmiMyNode(), CmiMyRank());)
-    ptr1 = myBuffer;
+    CkPostBuffer(myBuffer, n1, arrSize + CkNumPes() + thisIndex);
+    CkMatchBuffer(ncpyPost, 0, arrSize + CkNumPes() + thisIndex);
     CkAssert(n1 == bufferSize);
     DEBUG(CkPrintf("[%d][%d][%d] Nodegroup: recvLargeArray Post done posted buffer is %p and size is %d\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), myBuffer, bufferSize);)
   }

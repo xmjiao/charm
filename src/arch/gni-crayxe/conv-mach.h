@@ -29,11 +29,10 @@
    one of them must be 1, all the others 0. The different implementations are in
    convserve.h Typically used are UNAVAILABLE for non SMP versions and
    POSIX_THREADS_SMP for SMP versions. The others are used only in special
-   cases: UNIPROCESSOR in sim and uth, PTHREADS in origin,
+   cases: PTHREADS in origin,
    and NT_THREADS in windows. */
 #define CMK_SHARED_VARS_UNAVAILABLE                        1 /* non SMP versions */
 #define CMK_SHARED_VARS_POSIX_THREADS_SMP                  0 /* SMP versions */
-#define CMK_SHARED_VARS_UNIPROCESSOR                       0
 #define CMK_SHARED_VARS_NT_THREADS                         0
 
 /* the following define if signal handlers should be used, both equal to zero
@@ -92,5 +91,9 @@ In fault tolerant architectures, CK_MEM_CHECKPOINT can be set. In this case the
 extended header must contain also another field called "pn" (phase number).
 
 */
+
+#undef CMK_ONESIDED_IMPL
+// Disable CMK_ONESIDED_IMPL until bug https://github.com/UIUC-PPL/charm/issues/2589 is fixed
+#define CMK_ONESIDED_IMPL                                  0
 
 #endif

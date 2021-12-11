@@ -9,13 +9,13 @@
 int LBSimulation::dumpStep = -1;  	     /// first step number to dump
 int LBSimulation::dumpStepSize = 1;          /// number of steps to dump 
 char* LBSimulation::dumpFile = (char*)"lbdata.dat"; /// dump file name
-int LBSimulation::doSimulation = 0; 	     /// flag if do simulation
+bool LBSimulation::doSimulation = false; 	     /// flag if do simulation
 int LBSimulation::simStep = -1;              /// first step number to simulate
 int LBSimulation::simStepSize = 1;           /// number of steps to simulate
 int LBSimulation::simProcs = 0; 	     /// simulation target procs
-int LBSimulation::procsChanged = 0;          /// flag if the number of procs has been changed
+bool LBSimulation::procsChanged = false;          /// flag if the number of procs has been changed
 
-int LBSimulation::showDecisionsOnly = 0;     /// flag to write all LB decisions
+bool LBSimulation::showDecisionsOnly = false;     /// flag to write all LB decisions
 int _lb_version = LB_FORMAT_VERSION;	     /// data file version
 
 /*****************************************************************************
@@ -83,7 +83,7 @@ void LBInfo::getInfo(BaseLB::LDStats* stats, int count, int considerComm)
 	for(pe = 0; pe < count; pe++)
     	  peLoads[pe] = stats->procs[pe].bg_walltime;
 
-    	for(int obj = 0; obj < stats->n_objs; obj++)
+    	for(int obj = 0; obj < stats->objData.size(); obj++)
     	{
 		int pe = stats->to_proc[obj];
 		if (pe == -1) continue;     // this object is out
@@ -105,8 +105,7 @@ void LBInfo::getInfo(BaseLB::LDStats* stats, int count, int considerComm)
 	    msgSentCount[i] = msgRecvCount[i] = byteSentCount[i] = byteRecvCount[i] = 0;
 
 	  int mcast_count = 0;
-          for (int cidx=0; cidx < stats->n_comm; cidx++) {
-	    LDCommData& cdata = stats->commData[cidx];
+          for (auto& cdata : stats->commData) {
 	    int senderPE, receiverPE;
 	    if (cdata.from_proc())
 	      senderPE = cdata.src_proc;
@@ -140,9 +139,9 @@ void LBInfo::getInfo(BaseLB::LDStats* stats, int count, int considerComm)
 	    }
             else if (receiver_type == LD_OBJLIST_MSG) {
               int nobjs;
-              LDObjKey *objs = cdata.receiver.get_destObjs(nobjs);
+              const LDObjKey *objs = cdata.receiver.get_destObjs(nobjs);
 	      mcast_count ++;
-	      CkVec<int> pes;
+	      std::vector<int> pes;
 	      for (i=0; i<nobjs; i++) {
 	        int idx = stats->getHash(objs[i]);
 		CmiAssert(idx != -1);
@@ -150,8 +149,8 @@ void LBInfo::getInfo(BaseLB::LDStats* stats, int count, int considerComm)
 	        receiverPE = stats->to_proc[idx];
 		CmiAssert(receiverPE < count && receiverPE >= 0);
 		int exist = 0;
-	        for (int p=0; p<pes.size(); p++) 
-		  if (receiverPE == pes[p]) { exist=1; break; }
+	        for (auto pe : pes)
+		  if (receiverPE == pe) { exist=1; break; }
 		if (exist) continue;
 		pes.push_back(receiverPE);
 	        if(senderPE != receiverPE)
@@ -227,8 +226,8 @@ void LBInfo::print()
   CmiPrintf("[%d] is Maxloaded maxload: %f ObjLoad %f BgLoad %f\n",
 			max_loaded_proc, peLoads[max_loaded_proc], objLoads[max_loaded_proc], bgLoads[max_loaded_proc]);
   // the min and max object (calculated in getLoadInfo)
-  CmiPrintf("MinObj : %f  MaxObj : %f\n", minObjLoad, maxObjLoad, average);
-  CmiPrintf("Non-local comm: %d msgs %lld bytes\n", msgCount, msgBytes);
+  CmiPrintf("MinObj : %f  MaxObj : %f  Average : %f\n", minObjLoad, maxObjLoad, average);
+  CmiPrintf("Non-local comm: %d msgs %" PRIu64 " bytes\n", msgCount, msgBytes);
 }
 
 void LBInfo::getSummary(LBRealType &maxLoad, LBRealType &maxCpuLoad, LBRealType &totalLoad)

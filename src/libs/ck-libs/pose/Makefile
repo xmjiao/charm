@@ -27,17 +27,23 @@ LIBSEQDEST =  $(CHARMLIB)/$(SEQLIB)
 
 all:  $(LIBDEST) $(LIBSEQDEST)
 
-.PHONY:  pose seqpose
+.PHONY: \
+  pose \
+  seqpose \
+  headerinst \
+  clean \
+  docs \
+  depends \
 
 pose: $(LIBDEST)
 
 seqpose:  $(LIBSEQDEST) 
 
-$(LIBDEST):	$(OBJECTS) $(POSEINCDIR) headerinst
+$(LIBDEST): $(OBJECTS) | $(POSEINCDIR) headerinst
 	$(CHARMC) -o $(LIBDEST) $(OBJECTS)
 	/bin/cp libmodulepose.dep $(CHARMLIB)/.
 
-$(LIBSEQDEST):	$(SEQOBJECTS) $(POSEINCDIR) headerinst
+$(LIBSEQDEST): $(SEQOBJECTS) | $(POSEINCDIR) headerinst
 	$(CHARMC) -o $(LIBSEQDEST) $(SEQOBJECTS)
 	/bin/cp libmodulepose.dep $(CHARMLIB)/libmoduleseqpose.dep
 
@@ -88,12 +94,12 @@ depends: cidepends.default $(CIOBJ)
 	      SRCFILE=`basename $$i .o`.C ; \
               echo "checking dependencies for $$i : $$SRCFILE" ; \
               g++ -MM -Wno-deprecated -I$(CHARMINC) $$SRCFILE >> $(DEPENDFILE); \
-              echo '	$$(CHARMC) -o '$$i $$SRCFILE >> $(DEPENDFILE) ; \
+              echo '	$$(CHARMC) -o '$$i -c $$SRCFILE >> $(DEPENDFILE) ; \
         done; 	\
         for i in $(SEQOBJECTS) ; do \
 	      SRCFILE=`basename $$i .seq.o`.C ; \
               echo "checking dependencies for $$i : $$SRCFILE" ; \
               g++ -MM -MT $$i -Wno-deprecated -I$(CHARMINC) $$SRCFILE >> $(DEPENDFILE); \
-              echo '	$$(CHARMC) -o '$$i -DSEQUENTIAL_POSE=1 $$SRCFILE >> $(DEPENDFILE) ; \
+              echo '	$$(CHARMC) -o '$$i -c -DSEQUENTIAL_POSE=1 $$SRCFILE >> $(DEPENDFILE) ; \
         done; 
 

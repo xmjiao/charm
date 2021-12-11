@@ -3,18 +3,46 @@
 
 #include "charm-api.h"
 
-#define STRINGIZE(x) #x
-#define STRINGIZE_VALUE_OF(x) STRINGIZE(x)
-#define privatization_method_str STRINGIZE_VALUE_OF(privatization_method)
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#define result_indent "  "
+typedef int * (*int_ptr_accessor)();
 
-#define test_privatization FTN_NAME(TEST_PRIVATIZATION, test_privatization)
-FLINKAGE void test_privatization(int & failed, int & rank, int & my_wth, int & global);
-#define privatization_test_framework FTN_NAME(PRIVATIZATION_TEST_FRAMEWORK, privatization_test_framework)
-FLINKAGE void privatization_test_framework(void);
+#if defined test_globalvars
+extern int extern_global_static;
+#if defined test_staticvars
+int * get_static_global_static();
+int * get_scoped_global_static();
+#endif
+#endif
+#if defined test_threadlocalvars
+thread_local extern int extern_threadlocal_static;
+#if defined test_staticvars
+int * get_static_threadlocal_static();
+int * get_scoped_threadlocal_static();
+#endif
+#endif
 
-#define perform_test_batch FTN_NAME(PERFORM_TEST_BATCH, perform_test_batch)
-FLINKAGE void perform_test_batch(int & failed, int & rank, int & my_wth);
+#if defined test_sharedlib
+#if defined test_globalvars
+extern CMI_EXPORT int extern_global_shared;
+#if defined test_staticvars
+CMI_EXPORT int * get_static_global_shared();
+CMI_EXPORT int * get_scoped_global_shared();
+#endif
+#endif
+#if defined test_threadlocalvars
+thread_local extern CMI_EXPORT int extern_threadlocal_shared;
+#if defined test_staticvars
+CMI_EXPORT int * get_static_threadlocal_shared();
+CMI_EXPORT int * get_scoped_threadlocal_shared();
+#endif
+#endif
+#endif
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

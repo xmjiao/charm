@@ -15,7 +15,6 @@ CpvDeclare(int, traceOn); /* For threads.C */
 CpvExtern(int, _traceCoreOn);   /* For cursed projector core */
 #endif
 int _threadEP=-123; /* for charmProjections.C */
-int traceBluegeneLinked = 0;
 
 void traceInit(char **argv) {
   CpvInitialize(int, traceOn);
@@ -54,7 +53,7 @@ void traceUserSuppliedBracketedNote(const char *note, int eventID, double bt, do
 void traceMemoryUsage(void) {}
 
 #if CMK_SMP_TRACE_COMMTHREAD
-int traceBeginCommOp(char *msg){}
+int traceBeginCommOp(char *msg) { return 0; }
 void traceEndCommOp(char *msg) {}
 void traceSendMsgComm(char *msg) {}
 void traceChangeLastTimestamp(double ts) {}

@@ -6,85 +6,42 @@
 #include "ck.h"
 #include "converse.h"
 #include "cmirdmautils.h"
+#include "spanningTree.h"
+#include <algorithm>
+#include "ckarray.h"
+#include "cklocation.h"
 
+void CmiFreeBroadcastAllExceptMeFn(int size, char *msg);
 
 #if CMK_SMP
 /*readonly*/ extern CProxy_ckcallback_group _ckcallbackgroup;
 #endif
 
+// Integer used to store the ncpy ack handler idx
+static int ncpy_handler_idx, ncpy_bcastNo_handler_idx, zcpy_pup_complete_handler_idx;
+
+CkpvExtern(ReqTagPostMap, ncpyPostedReqMap);
+CkpvExtern(ReqTagBufferMap, ncpyPostedBufferMap);
+CpvExtern(std::vector<NcpyOperationInfo *>, newZCPupGets);
+CksvExtern(ObjNumRdmaOpsMap, pendingZCOps);
+CksvExtern(CmiNodeLock, _nodeZCPendingLock);
+
+CksvExtern(ReqTagPostMap, ncpyPostedReqNodeMap);
+CksvExtern(ReqTagBufferMap, ncpyPostedBufferNodeMap);
+CksvExtern(CmiNodeLock, _nodeZCPostReqLock);
+CksvExtern(CmiNodeLock, _nodeZCBufferReqLock);
+
 /*********************************** Zerocopy Direct API **********************************/
-// Get Methods
-void CkNcpyBuffer::memcpyGet(CkNcpyBuffer &source) {
-  // memcpy the data from the source buffer into the destination buffer
-  memcpy((void *)ptr, source.ptr, cnt);
-}
-
-#if CMK_USE_CMA
-void CkNcpyBuffer::cmaGet(CkNcpyBuffer &source) {
-  CmiIssueRgetUsingCMA(source.ptr,
-         source.layerInfo,
-         source.pe,
-         ptr,
-         layerInfo,
-         pe,
-         cnt);
-}
-#endif
-
-void CkNcpyBuffer::rdmaGet(CkNcpyBuffer &source) {
-
-  int layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
-  int ackSize = sizeof(CkCallback);
-
-  if(mode == CK_BUFFER_UNREG) {
-    // register it because it is required for RGET
-    CmiSetRdmaBufferInfo(layerInfo + CmiGetRdmaCommonInfoSize(), ptr, cnt, mode);
-
-    isRegistered = true;
-  }
-
-  // Create a general object that can be used across layers and can store the state of the CkNcpyBuffer objects
-  int ncpyObjSize = getNcpyOpInfoTotalSize(
-                      layerInfoSize,
-                      ackSize,
-                      layerInfoSize,
-                      ackSize);
-
-  NcpyOperationInfo *ncpyOpInfo = (NcpyOperationInfo *)CmiAlloc(ncpyObjSize);
-
-  setNcpyOpInfo(source.ptr,
-                (char *)(source.layerInfo),
-                layerInfoSize,
-                (char *)(&source.cb),
-                ackSize,
-                source.cnt,
-                source.mode,
-                source.isRegistered,
-                source.pe,
-                source.ref,
-                ptr,
-                (char *)(layerInfo),
-                layerInfoSize,
-                (char *)(&cb),
-                ackSize,
-                cnt,
-                mode,
-                isRegistered,
-                pe,
-                ref,
-                ncpyOpInfo);
-
-  CmiIssueRget(ncpyOpInfo);
-}
 
 // Perform a nocopy get operation into this destination using the passed source
 CkNcpyStatus CkNcpyBuffer::get(CkNcpyBuffer &source){
-  if(mode == CK_BUFFER_NOREG || source.mode == CK_BUFFER_NOREG) {
+  if(regMode == CK_BUFFER_NOREG || source.regMode == CK_BUFFER_NOREG) {
     CkAbort("Cannot perform RDMA operations in CK_BUFFER_NOREG mode\n");
   }
 
   // Check that the source buffer fits into the destination buffer
-  CkAssert(source.cnt <= cnt);
+  if(cnt < source.cnt)
+    CkAbort("CkNcpyBuffer::get (destination.cnt < source.cnt) Destination buffer is smaller than the source buffer\n");
 
   // Check that this object is local when get is called
   CkAssert(CkNodeOf(pe) == CkMyNode());
@@ -95,8 +52,20 @@ CkNcpyStatus CkNcpyBuffer::get(CkNcpyBuffer &source){
   if(transferMode == CkNcpyMode::MEMCPY) {
     memcpyGet(source);
 
+#if CMK_REG_REQUIRED
+    // De-register source
+    if(source.isRegistered && source.deregMode == CMK_BUFFER_DEREG)
+      deregisterBuffer(source);
+#endif
+
     //Invoke the source callback
     source.cb.send(sizeof(CkNcpyBuffer), &source);
+
+#if CMK_REG_REQUIRED
+    // De-register destination
+    if(isRegistered && deregMode == CMK_BUFFER_DEREG)
+      deregisterBuffer(*this);
+#endif
 
     //Invoke the destination callback
     cb.send(sizeof(CkNcpyBuffer), this);
@@ -109,8 +78,19 @@ CkNcpyStatus CkNcpyBuffer::get(CkNcpyBuffer &source){
 
     cmaGet(source);
 
-    //Invoke the source callback
-    source.cb.send(sizeof(CkNcpyBuffer), &source);
+#if CMK_REG_REQUIRED
+    // De-register source and invoke cb
+    if(source.isRegistered && source.deregMode == CMK_BUFFER_DEREG)
+      invokeCmaDirectRemoteDeregAckHandler(source, ncpyHandlerIdx::CMA_DEREG_ACK_DIRECT); // Send a message to de-register source buffer and invoke callback
+    else
+#endif
+      source.cb.send(sizeof(CkNcpyBuffer), &source); //Invoke the source callback
+
+#if CMK_REG_REQUIRED
+    // De-register destination
+    if(isRegistered && deregMode == CMK_BUFFER_DEREG)
+      deregisterBuffer(*this);
+#endif
 
     //Invoke the destination callback
     cb.send(sizeof(CkNcpyBuffer), this);
@@ -118,23 +98,12 @@ CkNcpyStatus CkNcpyBuffer::get(CkNcpyBuffer &source){
     // rdma data transfer complete
     return CkNcpyStatus::complete;
 
-#endif
+#endif // end of CMK_USE_CMA
   } else if (transferMode == CkNcpyMode::RDMA) {
 
-    int outstandingRdmaOps = 1; // used by true-RDMA layers
+    zcQdIncrement();
 
-#if CMK_ONESIDED_IMPL
-#if CMK_CONVERSE_MPI
-    outstandingRdmaOps += 1; // MPI layer invokes CmiDirectAckHandler twice as sender and receiver post separately
-#endif
-#else
-    outstandingRdmaOps += 1; // non-RDMA layers invoke CmiDirectAckHandler twice using regular messages
-#endif
-
-    // Create QD to ensure that outstanding rdmaGet call is accounted for
-    QdCreate(outstandingRdmaOps);
-
-    rdmaGet(source);
+    rdmaGet(source, sizeof(CkCallback), (char *)&source.cb, (char *)&cb);
 
     // rdma data transfer incomplete
     return CkNcpyStatus::incomplete;
@@ -144,77 +113,14 @@ CkNcpyStatus CkNcpyBuffer::get(CkNcpyBuffer &source){
   }
 }
 
-// Put Methods
-void CkNcpyBuffer::memcpyPut(CkNcpyBuffer &destination) {
-  // memcpy the data from the source buffer into the destination buffer
-  memcpy((void *)destination.ptr, ptr, cnt);
-}
-
-#if CMK_USE_CMA
-void CkNcpyBuffer::cmaPut(CkNcpyBuffer &destination) {
-  CmiIssueRputUsingCMA(destination.ptr,
-                       destination.layerInfo,
-                       destination.pe,
-                       ptr,
-                       layerInfo,
-                       pe,
-                       cnt);
-}
-#endif
-
-void CkNcpyBuffer::rdmaPut(CkNcpyBuffer &destination) {
-
-  int layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
-  int ackSize = sizeof(CkCallback);
-
-  if(mode == CK_BUFFER_UNREG) {
-    // register it because it is required for RPUT
-    CmiSetRdmaBufferInfo(layerInfo + CmiGetRdmaCommonInfoSize(), ptr, cnt, mode);
-
-    isRegistered = true;
-  }
-
-  // Create a general object that can be used across layers that can store the state of the CkNcpyBuffer objects
-  int ncpyObjSize = getNcpyOpInfoTotalSize(
-                      layerInfoSize,
-                      ackSize,
-                      layerInfoSize,
-                      ackSize);
-
-  NcpyOperationInfo *ncpyOpInfo = (NcpyOperationInfo *)CmiAlloc(ncpyObjSize);
-
-  setNcpyOpInfo(ptr,
-                (char *)(layerInfo),
-                layerInfoSize,
-                (char *)(&cb),
-                ackSize,
-                cnt,
-                mode,
-                isRegistered,
-                pe,
-                ref,
-                destination.ptr,
-                (char *)(destination.layerInfo),
-                layerInfoSize,
-                (char *)(&destination.cb),
-                ackSize,
-                destination.cnt,
-                destination.mode,
-                destination.isRegistered,
-                destination.pe,
-                destination.ref,
-                ncpyOpInfo);
-
-  CmiIssueRput(ncpyOpInfo);
-}
-
 // Perform a nocopy put operation into the passed destination using this source
 CkNcpyStatus CkNcpyBuffer::put(CkNcpyBuffer &destination){
-  if(mode == CK_BUFFER_NOREG || destination.mode == CK_BUFFER_NOREG) {
+  if(regMode == CK_BUFFER_NOREG || destination.regMode == CK_BUFFER_NOREG) {
     CkAbort("Cannot perform RDMA operations in CK_BUFFER_NOREG mode\n");
   }
   // Check that the source buffer fits into the destination buffer
-  CkAssert(cnt <= destination.cnt);
+  if(destination.cnt < cnt)
+    CkAbort("CkNcpyBuffer::put (destination.cnt < source.cnt) Destination buffer is smaller than the source buffer\n");
 
   // Check that this object is local when put is called
   CkAssert(CkNodeOf(pe) == CkMyNode());
@@ -225,8 +131,20 @@ CkNcpyStatus CkNcpyBuffer::put(CkNcpyBuffer &destination){
   if(transferMode == CkNcpyMode::MEMCPY) {
     memcpyPut(destination);
 
+#if CMK_REG_REQUIRED
+    // De-register destination
+    if(destination.isRegistered && destination.deregMode == CMK_BUFFER_DEREG)
+      deregisterBuffer(destination);
+#endif
+
     //Invoke the destination callback
     destination.cb.send(sizeof(CkNcpyBuffer), &destination);
+
+#if CMK_REG_REQUIRED
+    // De-register source
+    if(isRegistered && deregMode == CMK_BUFFER_DEREG)
+      deregisterBuffer(*this);
+#endif
 
     //Invoke the source callback
     cb.send(sizeof(CkNcpyBuffer), this);
@@ -238,8 +156,19 @@ CkNcpyStatus CkNcpyBuffer::put(CkNcpyBuffer &destination){
   } else if(transferMode == CkNcpyMode::CMA) {
     cmaPut(destination);
 
-    //Invoke the destination callback
-    destination.cb.send(sizeof(CkNcpyBuffer), &destination);
+#if CMK_REG_REQUIRED
+    // De-register destination invoke cb
+    if(destination.isRegistered && destination.deregMode == CMK_BUFFER_DEREG)
+      invokeCmaDirectRemoteDeregAckHandler(destination, ncpyHandlerIdx::CMA_DEREG_ACK_DIRECT); // Send a message to de-register dest buffer and invoke callback
+    else
+#endif
+      destination.cb.send(sizeof(CkNcpyBuffer), &destination); //Invoke the destination callback
+
+#if CMK_REG_REQUIRED
+    // De-register source
+    if(isRegistered && deregMode == CMK_BUFFER_DEREG)
+      deregisterBuffer(*this);
+#endif
 
     //Invoke the source callback
     cb.send(sizeof(CkNcpyBuffer), this);
@@ -250,20 +179,9 @@ CkNcpyStatus CkNcpyBuffer::put(CkNcpyBuffer &destination){
 #endif
   } else if (transferMode == CkNcpyMode::RDMA) {
 
-    int outstandingRdmaOps = 1; // used by true-RDMA layers
+    zcQdIncrement();
 
-#if CMK_ONESIDED_IMPL
-#if CMK_CONVERSE_MPI
-    outstandingRdmaOps += 1; // MPI layer invokes CmiDirectAckHandler twice as sender and receiver post separately
-#endif
-#else
-    outstandingRdmaOps += 1; // non-RDMA layers invoke CmiDirectAckHandler twice using regular messages
-#endif
-
-    // Create QD to ensure that outstanding rdmaGet call is accounted for
-    QdCreate(outstandingRdmaOps);
-
-    rdmaPut(destination);
+    rdmaPut(destination, sizeof(CkCallback), (char *)&cb, (char *)&destination.cb);
 
     // rdma data transfer incomplete
     return CkNcpyStatus::incomplete;
@@ -279,7 +197,8 @@ void constructSourceBufferObject(NcpyOperationInfo *info, CkNcpyBuffer &src) {
   src.pe  = info->srcPe;
   src.cnt = info->srcSize;
   src.ref = info->srcRef;
-  src.mode = info->srcMode;
+  src.regMode = info->srcRegMode;
+  src.deregMode = info->srcDeregMode;
   src.isRegistered = info->isSrcRegistered;
   memcpy((char *)(&src.cb), info->srcAck, info->srcAckSize); // initialize cb
   memcpy((char *)(src.layerInfo), info->srcLayerInfo, info->srcLayerSize); // initialize layerInfo
@@ -291,7 +210,8 @@ void constructDestinationBufferObject(NcpyOperationInfo *info, CkNcpyBuffer &des
   dest.pe  = info->destPe;
   dest.cnt = info->destSize;
   dest.ref = info->destRef;
-  dest.mode = info->destMode;
+  dest.regMode = info->destRegMode;
+  dest.deregMode = info->destDeregMode;
   dest.isRegistered = info->isDestRegistered;
   memcpy((char *)(&dest.cb), info->destAck, info->destAckSize); // initialize cb
   memcpy((char *)(dest.layerInfo), info->destLayerInfo, info->destLayerSize); // initialize layerInfo
@@ -322,10 +242,50 @@ void invokeDestinationCallback(NcpyOperationInfo *info) {
 }
 
 void handleDirectApiCompletion(NcpyOperationInfo *info) {
-  invokeSourceCallback(info);
-  invokeDestinationCallback(info);
 
-  if(info->freeMe == CMK_FREE_NCPYOPINFO)
+  int freeMe = info->freeMe;
+
+  if(CmiMyNode() == CmiNodeOf(info->destPe)) {
+#if CMK_REG_REQUIRED
+    if(info->isDestRegistered == 1 && info->destDeregMode == CK_BUFFER_DEREG)
+      deregisterDestBuffer(info);
+#endif
+
+    // Invoke the destination callback
+    invokeDestinationCallback(info);
+
+#if CMK_REG_REQUIRED
+    // send a message to the source to de-register and invoke callback
+    if(info->isSrcRegistered == 1 && info->srcDeregMode == CK_BUFFER_DEREG) {
+      freeMe = CMK_DONT_FREE_NCPYOPINFO; // don't free info here, it'll be freed by the machine layer
+      QdCreate(1); // Matching QdProcess in CkRdmaDirectAckHandler
+      CmiInvokeRemoteDeregAckHandler(info->srcPe, info);
+    } else
+#endif
+      invokeSourceCallback(info);
+  }
+
+  if(CmiMyNode() == CmiNodeOf(info->srcPe)) {
+#if CMK_REG_REQUIRED
+    if(info->isSrcRegistered == 1 && info->srcDeregMode == CK_BUFFER_DEREG)
+      deregisterSrcBuffer(info);
+#endif
+
+    // Invoke the source callback
+    invokeSourceCallback(info);
+
+#if CMK_REG_REQUIRED
+    // send a message to the destination to de-register and invoke callback
+    if(info->isDestRegistered == 1 && info->destDeregMode == CK_BUFFER_DEREG) {
+      freeMe = CMK_DONT_FREE_NCPYOPINFO; // don't free info here, it'll be freed by the machine layer
+      QdCreate(1); // Matching QdProcess in CkRdmaDirectAckHandler
+      CmiInvokeRemoteDeregAckHandler(info->destPe, info);
+    } else
+#endif
+      invokeDestinationCallback(info);
+  }
+
+  if(freeMe == CMK_FREE_NCPYOPINFO)
     CmiFree(info);
 }
 
@@ -337,35 +297,52 @@ void CkRdmaDirectAckHandler(void *ack) {
 
   NcpyOperationInfo *info = (NcpyOperationInfo *)(ack);
 
-  CkCallback *srcCb = (CkCallback *)(info->srcAck);
-  CkCallback *destCb = (CkCallback *)(info->destAck);
-
   switch(info->opMode) {
-    case CMK_DIRECT_API           : handleDirectApiCompletion(info); // Ncpy Direct API
-                                    break;
-#if CMK_ONESIDED_IMPL
-    case CMK_EM_API               : handleEntryMethodApiCompletion(info); // Ncpy EM API invoked through a GET
-                                    break;
+    case CMK_DIRECT_API             : handleDirectApiCompletion(info); // Ncpy Direct API
+                                      break;
 
-    case CMK_EM_API_REVERSE       : handleReverseEntryMethodApiCompletion(info); // Ncpy EM API invoked through a PUT
-                                    break;
+    case CMK_EM_API                 : handleEntryMethodApiCompletion(info); // Ncpy EM API invoked through a GET
+                                      break;
 
-    case CMK_BCAST_EM_API         : handleBcastEntryMethodApiCompletion(info); // Ncpy EM Bcast API
-                                    break;
+    case CMK_EM_API_SRC_ACK_INVOKE  : invokeSourceCallback(info);
+                                      break;
 
-    case CMK_BCAST_EM_API_REVERSE : handleBcastReverseEntryMethodApiCompletion(info); // Ncpy EM Bcast API invoked through a PUT
-                                    break;
-    case CMK_READONLY_BCAST       : readonlyGetCompleted(info);
-                                    break;
-#endif
-    default                       : CkAbort("CkRdmaDirectAckHandler: Unknown ncpyOpInfo->opMode");
-                                    break;
+    case CMK_EM_API_DEST_ACK_INVOKE : invokeDestinationCallback(info);
+                                      break;
+
+    case CMK_EM_API_REVERSE         : handleReverseEntryMethodApiCompletion(info); // Ncpy EM API invoked through a PUT
+                                      break;
+
+    case CMK_BCAST_EM_API           : handleBcastEntryMethodApiCompletion(info); // Ncpy EM Bcast API
+                                      break;
+
+    case CMK_BCAST_EM_API_REVERSE   : handleBcastReverseEntryMethodApiCompletion(info); // Ncpy EM Bcast API invoked through a PUT
+                                      break;
+
+    case CMK_READONLY_BCAST         : readonlyGetCompleted(info);
+                                      break;
+
+    case CMK_ZC_PUP                 : zcPupGetCompleted(info);
+                                      break;
+
+    default                         : CkAbort("CkRdmaDirectAckHandler: Unknown ncpyOpInfo->opMode");
+                                      break;
   }
 }
 
 // Helper methods
-void invokeCallback(void *cb, int pe, CkNcpyBuffer &buff) {
+void invokeCallback(CkNcpyBuffer &buff) {
+#if CMK_SMP
+    //call to callbackgroup to call the callback when calling from comm thread
+    //this adds one more trip through the scheduler
+    _ckcallbackgroup[buff.pe].call(buff.cb, sizeof(CkNcpyBuffer), (const char *)(&buff));
+#else
+    //Invoke the callback
+    buff.cb.send(sizeof(CkNcpyBuffer), &buff);
+#endif
+}
 
+void invokeCallback(void *cb, int pe, CkNcpyBuffer &buff) {
 #if CMK_SMP
     //call to callbackgroup to call the callback when calling from comm thread
     //this adds one more trip through the scheduler
@@ -374,20 +351,6 @@ void invokeCallback(void *cb, int pe, CkNcpyBuffer &buff) {
     //Invoke the destination callback
     ((CkCallback *)(cb))->send(sizeof(CkNcpyBuffer), &buff);
 #endif
-}
-
-// Returns CkNcpyMode::MEMCPY if both the PEs are the same and memcpy can be used
-// Returns CkNcpyMode::CMA if both the PEs are in the same physical node and CMA can be used
-// Returns CkNcpyMode::RDMA if RDMA needs to be used
-CkNcpyMode findTransferMode(int srcPe, int destPe) {
-  if(CmiNodeOf(srcPe)==CmiNodeOf(destPe))
-    return CkNcpyMode::MEMCPY;
-#if CMK_USE_CMA
-  else if(CmiDoesCMAWork() && CmiPeOnSamePhysicalNode(srcPe, destPe))
-    return CkNcpyMode::CMA;
-#endif
-  else
-    return CkNcpyMode::RDMA;
 }
 
 void enqueueNcpyMessage(int destPe, void *msg){
@@ -404,27 +367,66 @@ void enqueueNcpyMessage(int destPe, void *msg){
 #endif
 }
 
+inline void zcQdIncrement() {
+    int outstandingRdmaOps = 1; // used by true-RDMA layers
 
 #if CMK_ONESIDED_IMPL
-/*********************************** Zerocopy Entry Method API ****************************/
+#if CMK_CONVERSE_MPI
+    outstandingRdmaOps += 1; // MPI layer invokes CmiDirectAckHandler twice as sender and receiver post separately
+#endif
+#else
+    outstandingRdmaOps += 1; // non-RDMA layers invoke CmiDirectAckHandler twice using regular messages
+#endif
 
+    // Create QD to ensure that outstanding rdmaGet call is accounted for
+    QdCreate(outstandingRdmaOps);
+}
+
+
+/*********************************** Zerocopy Entry Method API ****************************/
 
 /************************* Zerocopy Entry Method API - Utility functions ******************/
 
-void performRgets(char *ref, int numops, int extraSize) {
+void performRget(NcpyEmInfo *ref, int index, int extraSize) {
+  // Launch rget
+  NcpyEmBufferInfo *ncpyEmBufferInfo = (NcpyEmBufferInfo *)((char *)ref + sizeof(NcpyEmInfo) + index *(sizeof(NcpyEmBufferInfo) + extraSize));
+  NcpyOperationInfo *ncpyOpInfo = &(ncpyEmBufferInfo->ncpyOpInfo);
+  zcQdIncrement();
+  CmiIssueRget(ncpyOpInfo);
+}
+
+void performRgets(NcpyEmInfo *ref, int numops, int extraSize) {
   // Launch rgets
   for(int i=0; i<numops; i++){
-    NcpyEmBufferInfo *ncpyEmBufferInfo = (NcpyEmBufferInfo *)(ref + sizeof(NcpyEmInfo) + i *(sizeof(NcpyEmBufferInfo) + extraSize));
-    NcpyOperationInfo *ncpyOpInfo = &(ncpyEmBufferInfo->ncpyOpInfo);
-    CmiIssueRget(ncpyOpInfo);
+    performRget(ref, i, extraSize);
   }
+}
+
+CmiSpanningTreeInfo* getSpanningTreeInfo(int startNode) {
+  return (startNode == 0) ? _topoTree : ST_RecursivePartition_getTreeInfo(startNode);
+}
+
+inline bool isDeregReady(CkNcpyBuffer &buffInfo) {
+#if CMK_REG_REQUIRED
+  return (buffInfo.regMode != CK_BUFFER_UNREG && buffInfo.deregMode != CK_BUFFER_NODEREG);
+#endif
+  return false;
+}
+
+inline void deregisterDestBuffer(NcpyOperationInfo *ncpyOpInfo) {
+  CmiDeregisterMem(ncpyOpInfo->destPtr, ncpyOpInfo->destLayerInfo + CmiGetRdmaCommonInfoSize(), ncpyOpInfo->destPe, ncpyOpInfo->destRegMode);
+  ncpyOpInfo->isDestRegistered = 0;
+}
+
+inline void deregisterSrcBuffer(NcpyOperationInfo *ncpyOpInfo) {
+  CmiDeregisterMem(ncpyOpInfo->srcPtr, ncpyOpInfo->srcLayerInfo + CmiGetRdmaCommonInfoSize(), ncpyOpInfo->srcPe, ncpyOpInfo->srcRegMode);
+  ncpyOpInfo->isSrcRegistered = 0;
 }
 
 // Method called on completion of an Zcpy EM API (Send or Recv, P2P or BCAST)
 void CkRdmaEMAckHandler(int destPe, void *ack) {
 
   if(_topoTree == NULL) CkAbort("CkRdmaIssueRgets:: topo tree has not been calculated \n");
-  CmiSpanningTreeInfo &t = *_topoTree;
 
   NcpyEmBufferInfo *emBuffInfo = (NcpyEmBufferInfo *)(ack);
 
@@ -442,14 +444,25 @@ void CkRdmaEMAckHandler(int destPe, void *ack) {
   ncpyEmInfo->counter++; // Operation completed, update counter
 
 #if CMK_REG_REQUIRED
-  if(ncpyEmInfo->mode == ncpyEmApiMode::P2P_SEND ||
-     ncpyEmInfo->mode == ncpyEmApiMode::P2P_RECV ||
-     (ncpyEmInfo->mode == ncpyEmApiMode::BCAST_SEND && t.child_count == 0) ||
-     (ncpyEmInfo->mode == ncpyEmApiMode::BCAST_RECV && t.child_count == 0)) { // EM P2P API or EM BCAST API's child node
+  CmiSpanningTreeInfo *t = NULL;
+  if(ncpyEmInfo->mode == ncpyEmApiMode::BCAST_SEND || ncpyEmInfo->mode == ncpyEmApiMode::BCAST_RECV)
+    t = getSpanningTreeInfo(getRootNode((envelope *)ncpyEmInfo->msg));
 
-    NcpyOperationInfo *ncpyOpInfo = &(emBuffInfo->ncpyOpInfo);
+  NcpyOperationInfo *ncpyOpInfo = &(emBuffInfo->ncpyOpInfo);
+
+  if(ncpyEmInfo->mode == ncpyEmApiMode::P2P_SEND ||
+     (ncpyEmInfo->mode == ncpyEmApiMode::BCAST_SEND && t->child_count == 0)) {  // EM P2P Send API or EM BCAST Send API
+
     // De-register the destination buffer
-    CmiDeregisterMem(ncpyOpInfo->destPtr, ncpyOpInfo->destLayerInfo + CmiGetRdmaCommonInfoSize(), ncpyOpInfo->destPe, ncpyOpInfo->destMode);
+    deregisterDestBuffer(ncpyOpInfo);
+
+  } else if(ncpyEmInfo->mode == ncpyEmApiMode::P2P_RECV ||
+           (ncpyEmInfo->mode == ncpyEmApiMode::BCAST_RECV && t->child_count == 0)) {  // EM P2P Post API or EM BCAST Post API
+
+    // De-register only if destDeregMode is CK_BUFFER_DEREG
+    if(ncpyOpInfo->destDeregMode == CK_BUFFER_DEREG) {
+      deregisterDestBuffer(ncpyOpInfo);
+    }
   }
 #endif
 
@@ -460,7 +473,11 @@ void CkRdmaEMAckHandler(int destPe, void *ack) {
       case ncpyEmApiMode::P2P_SEND    : enqueueNcpyMessage(destPe, ncpyEmInfo->msg);
                                         break;
 
-      case ncpyEmApiMode::P2P_RECV    : enqueueNcpyMessage(destPe, ncpyEmInfo->msg);
+      case ncpyEmApiMode::P2P_RECV    : // Since P2P_RECV messages are enqueued twice (first with Post EM
+                                        // and the next time with Regular EM), hence QdCounter should be added
+                                        QdCreate(1);
+                                        CMI_ZC_MSGTYPE(ncpyEmInfo->msg) = CMK_REG_NO_ZC_MSG;
+                                        enqueueNcpyMessage(destPe, ncpyEmInfo->msg);
                                         CmiFree(ncpyEmInfo);
                                         break;
 
@@ -480,46 +497,69 @@ void performEmApiMemcpy(CkNcpyBuffer &source, CkNcpyBuffer &dest, ncpyEmApiMode 
   dest.memcpyGet(source);
 
   if(emMode == ncpyEmApiMode::P2P_SEND || emMode == ncpyEmApiMode::P2P_RECV) {
+
+    // De-register source
+    if(isDeregReady(source))
+      deregisterBuffer(source);
+
+    // De-register destination for p2p Post API
+    if(emMode == ncpyEmApiMode::P2P_RECV && isDeregReady(dest))
+      deregisterBuffer(dest);
+
     // Invoke source callback
     source.cb.send(sizeof(CkNcpyBuffer), &source);
+
   } // send a message to the parent to indicate completion
   else if (emMode == ncpyEmApiMode::BCAST_SEND || emMode == ncpyEmApiMode::BCAST_RECV) {
-    // Invoke the bcast handler
-    CkRdmaEMBcastAckHandler((void *)source.bcastAckInfo);
+    // De-register dest if it has been registered
+    if(emMode == ncpyEmApiMode::BCAST_RECV && isDeregReady(dest))
+      deregisterBuffer(dest);
   }
 }
 
 #if CMK_USE_CMA
-void performEmApiCmaTransfer(CkNcpyBuffer &source, CkNcpyBuffer &dest, int child_count, ncpyEmApiMode emMode) {
+void performEmApiCmaTransfer(CkNcpyBuffer &source, CkNcpyBuffer &dest, CmiSpanningTreeInfo *t, ncpyEmApiMode emMode) {
   dest.cmaGet(source);
 
   if(emMode == ncpyEmApiMode::P2P_SEND || emMode == ncpyEmApiMode::P2P_RECV) {
-    // Invoke source callback
-    source.cb.send(sizeof(CkNcpyBuffer), &source);
+
+    // De-register destination for p2p Post API
+    if(emMode == ncpyEmApiMode::P2P_RECV && isDeregReady(dest))
+      deregisterBuffer(dest);
+
+    if(source.refAckInfo == NULL) { // Not a part of a de-registration group
+      // Invoke source callback
+      source.cb.send(sizeof(CkNcpyBuffer), &source);
+    }
   }
   else if (emMode == ncpyEmApiMode::BCAST_SEND || emMode == ncpyEmApiMode::BCAST_RECV) {
-    if(child_count != 0) {
-      if(dest.mode == CK_BUFFER_UNREG) {
+    if(t->child_count != 0) {
+      if(dest.regMode == CK_BUFFER_UNREG) {
         // register it because it is required for RGET performed by child nodes
-        CmiSetRdmaBufferInfo(dest.layerInfo + CmiGetRdmaCommonInfoSize(), dest.ptr, dest.cnt, dest.mode);
+        CmiSetRdmaBufferInfo(dest.layerInfo + CmiGetRdmaCommonInfoSize(), dest.ptr, dest.cnt, dest.regMode);
         dest.isRegistered = true;
       }
+      // Buffers on intermediate nodes are left registered to have their child nodes rget from them
+    } else {
+      // De-register dest on child nodes if it has been registered
+      if(emMode == ncpyEmApiMode::BCAST_RECV && isDeregReady(dest))
+        deregisterBuffer(dest);
     }
   }
 }
 #endif
 
-void performEmApiRget(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, char *ref, int extraSize, ncpyEmApiMode emMode) {
+void performEmApiRget(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, NcpyEmInfo *ref, int extraSize, int rootNode, ncpyEmApiMode emMode) {
 
   int layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
-  if(dest.mode == CK_BUFFER_UNREG) {
+  if(dest.regMode == CK_BUFFER_UNREG) {
     // register it because it is required for RGET
-    CmiSetRdmaBufferInfo(dest.layerInfo + CmiGetRdmaCommonInfoSize(), dest.ptr, dest.cnt, dest.mode);
+    CmiSetRdmaBufferInfo(dest.layerInfo + CmiGetRdmaCommonInfoSize(), dest.ptr, dest.cnt, dest.regMode);
 
     dest.isRegistered = true;
   }
 
-  NcpyEmBufferInfo *ncpyEmBufferInfo = (NcpyEmBufferInfo *)(ref + sizeof(NcpyEmInfo) + opIndex *(sizeof(NcpyEmBufferInfo) + extraSize));
+  NcpyEmBufferInfo *ncpyEmBufferInfo = (NcpyEmBufferInfo *)((char *)ref + sizeof(NcpyEmInfo) + opIndex *(sizeof(NcpyEmBufferInfo) + extraSize));
   ncpyEmBufferInfo->index = opIndex;
 
   NcpyOperationInfo *ncpyOpInfo = &(ncpyEmBufferInfo->ncpyOpInfo);
@@ -529,7 +569,8 @@ void performEmApiRget(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, cha
                 (char *)(&source.cb),
                 sizeof(CkCallback),
                 source.cnt,
-                source.mode,
+                source.regMode,
+                source.deregMode,
                 source.isRegistered,
                 source.pe,
                 source.ref,
@@ -539,10 +580,12 @@ void performEmApiRget(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, cha
                 NULL,
                 0,
                 dest.cnt,
-                dest.mode,
+                dest.regMode,
+                dest.deregMode,
                 dest.isRegistered,
                 dest.pe,
                 (char *)(ncpyEmBufferInfo), // destRef
+                rootNode,
                 ncpyOpInfo);
 
   // set opMode
@@ -557,21 +600,21 @@ void performEmApiRget(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, cha
                                                  // It'll be freed when the message is freed by the RTS after the execution of the entry method
   ncpyOpInfo->refPtr = ncpyEmBufferInfo;
 
-  // Do no launch Rgets here as they could potentially cause a race condition in the SMP mode
+  // Do not launch Rgets here as they could potentially cause a race condition in the SMP mode
   // The race condition is caused when an RGET completes and invokes the CkRdmaDirectAckHandler
   // on the comm. thread as the message is being inside this for loop on the worker thread
 }
 
-void performEmApiNcpyTransfer(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, int child_count, char *ref, int extraSize, CkNcpyMode ncpyMode, ncpyEmApiMode emMode){
+void performEmApiNcpyTransfer(CkNcpyBuffer &source, CkNcpyBuffer &dest, int opIndex, CmiSpanningTreeInfo *t, NcpyEmInfo *ref, int extraSize, CkNcpyMode ncpyMode, int rootNode, ncpyEmApiMode emMode){
 
   switch(ncpyMode) {
     case CkNcpyMode::MEMCPY: performEmApiMemcpy(source, dest, emMode);
                                    break;
 #if CMK_USE_CMA
-    case CkNcpyMode::CMA   : performEmApiCmaTransfer(source, dest, child_count, emMode);
+    case CkNcpyMode::CMA   : performEmApiCmaTransfer(source, dest, t, emMode);
                                    break;
 #endif
-    case CkNcpyMode::RDMA  : performEmApiRget(source, dest, opIndex, ref, extraSize, emMode);
+    case CkNcpyMode::RDMA  : performEmApiRget(source, dest, opIndex, ref, extraSize, rootNode, emMode);
                                    break;
 
     default                      : CkAbort("Invalid Mode");
@@ -594,16 +637,18 @@ void preprocessRdmaCaseForRgets(int &layerInfoSize, int &ncpyObjSize, int &extra
     totalMsgSize += sizeof(NcpyEmInfo) + numops*(sizeof(NcpyEmBufferInfo) + extraSize);
 }
 
-void setNcpyEmInfo(char *ref, envelope *env, int &msgsize, int &numops, void *forwardMsg, ncpyEmApiMode emMode) {
+void setNcpyEmInfo(NcpyEmInfo *ncpyEmInfo, envelope *env, int &numops, void *forwardMsg, ncpyEmApiMode emMode) {
 
-    NcpyEmInfo *ncpyEmInfo = (NcpyEmInfo *)ref;
     ncpyEmInfo->numOps = numops;
     ncpyEmInfo->counter = 0;
     ncpyEmInfo->msg = env;
 
-    ncpyEmInfo->forwardMsg = forwardMsg; // useful only for BCAST, NULL for P2P
+    ncpyEmInfo->forwardMsg = forwardMsg; // useful only for Send Bcast, NULL for others
     ncpyEmInfo->pe = CkMyPe();
     ncpyEmInfo->mode = emMode; // P2P or BCAST
+
+    ncpyEmInfo->tagArray = nullptr;
+    ncpyEmInfo->peerAckInfo = nullptr;
 }
 
 /* Zerocopy Entry Method API Functions */
@@ -611,9 +656,11 @@ void setNcpyEmInfo(char *ref, envelope *env, int &msgsize, int &numops, void *fo
 void CkPackRdmaPtrs(char *msgBuf){
   PUP::toMem p((void *)msgBuf);
   PUP::fromMem up((void *)msgBuf);
-  int numops;
+  int numops, rootNode;
   up|numops;
+  up|rootNode;
   p|numops;
+  p|rootNode;
 
   // Pack ncpy pointers in CkNcpyBuffer
   for(int i=0; i<numops; i++){
@@ -628,9 +675,11 @@ void CkPackRdmaPtrs(char *msgBuf){
 void CkUnpackRdmaPtrs(char *msgBuf){
   PUP::toMem p((void *)msgBuf);
   PUP::fromMem up((void *)msgBuf);
-  int numops;
+  int numops, rootNode;
   up|numops;
+  up|rootNode;
   p|numops;
+  p|rootNode;
 
   // Unpack ncpy pointers in CkNcpyBuffer
   for(int i=0; i<numops; i++){
@@ -644,11 +693,12 @@ void CkUnpackRdmaPtrs(char *msgBuf){
 
 // Determine the number of ncpy ops and the sum of the ncpy buffer sizes
 // from the metadata message
-void getRdmaNumopsAndBufsize(envelope *env, int &numops, int &bufsize) {
+void getRdmaNumopsAndBufsize(envelope *env, int &numops, int &bufsize, int &rootNode) {
   numops = 0;
   bufsize = 0;
   PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
   up|numops;
+  up|rootNode;
   for(int i=0; i<numops; i++){
     CkNcpyBuffer w;
     up|w;
@@ -656,8 +706,37 @@ void getRdmaNumopsAndBufsize(envelope *env, int &numops, int &bufsize) {
   }
 }
 
+int getSrcPe(envelope *env) {
+  int numops, rootNode;
+  PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
+  up|numops;
+  up|rootNode;
+  CkEnforce(numops > 0);
+  CkNcpyBuffer w;
+  up|w;
+  return w.pe;
+}
+
+int getRootNode(envelope *env) {
+  int numops;
+  int rootNode;
+  PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
+  up|numops;
+  up|rootNode;
+  return rootNode;
+}
+
 void handleEntryMethodApiCompletion(NcpyOperationInfo *info) {
-  invokeSourceCallback(info);
+
+#if CMK_REG_REQUIRED
+  // send a message to the source to de-register and invoke callback
+  if(info->srcDeregMode == CK_BUFFER_DEREG) {
+    QdCreate(1); // Matching QdProcess in CkRdmaDirectAckHandler
+    CmiInvokeRemoteDeregAckHandler(info->srcPe, info);
+  } else // Do not de-register source when srcDeregMode != CK_BUFFER_DEREG
+#endif
+    invokeSourceCallback(info);
+
   if(info->ackMode == CMK_SRC_DEST_ACK || info->ackMode == CMK_DEST_ACK) {
     // Invoke the ackhandler function to update the counter
     CkRdmaEMAckHandler(info->destPe, info->refPtr);
@@ -665,11 +744,21 @@ void handleEntryMethodApiCompletion(NcpyOperationInfo *info) {
 }
 
 void handleReverseEntryMethodApiCompletion(NcpyOperationInfo *info) {
-  invokeSourceCallback(info);
+
   if(info->ackMode == CMK_SRC_DEST_ACK || info->ackMode == CMK_DEST_ACK) {
-    // Send a message to the receiver to invoke the ackhandler function to update the counter
-    CmiInvokeRemoteAckHandler(info->destPe, info->refPtr);
+    // Send a message to the receiver to invoke CkRdmaEMAckHandler to update the counter
+    invokeRemoteNcpyAckHandler(info->destPe, info->refPtr, ncpyHandlerIdx::EM_ACK);
   }
+
+#if CMK_REG_REQUIRED
+  // De-register source only when srcDeregMode == CK_BUFFER_DEREG
+  if(info->srcDeregMode == CK_BUFFER_DEREG) {
+    deregisterSrcBuffer(info);
+  }
+#endif
+
+  invokeSourceCallback(info);
+
   if(info->freeMe == CMK_FREE_NCPYOPINFO)
     CmiFree(info);
 }
@@ -684,20 +773,23 @@ void handleReverseEntryMethodApiCompletion(NcpyOperationInfo *info) {
  */
 envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg){
 
-  int numops=0, bufsize=0, msgsize=0;
+  int numops=0, bufsize=0, msgsize=0, rootNode = -1;
 
   CkUnpackMessage(&env); // Unpack message to access msgBuf inside getRdmaNumopsAndBufsize
-  getRdmaNumopsAndBufsize(env, numops, bufsize);
+  getRdmaNumopsAndBufsize(env, numops, bufsize, rootNode);
   CkPackMessage(&env); // Pack message to ensure corret copying into copyenv
 
   msgsize = env->getTotalsize();
   int totalMsgSize = CK_ALIGN(msgsize, 16) + bufsize;
-  char *ref;
+  NcpyEmInfo *ncpyEmInfo;
   int layerInfoSize, ncpyObjSize, extraSize;
+
+  CmiSpanningTreeInfo *t = NULL;
 
   CkNcpyMode ncpyMode = findTransferMode(env->getSrcPe(), CkMyPe());
   if(_topoTree == NULL) CkAbort("CkRdmaIssueRgets:: topo tree has not been calculated \n");
-  CmiSpanningTreeInfo &t = *_topoTree;
+  if(emMode == ncpyEmApiMode::BCAST_SEND || emMode == ncpyEmApiMode::BCAST_RECV)
+    t = getSpanningTreeInfo(rootNode);
 
   layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
 
@@ -716,36 +808,52 @@ envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg
    */
   copyenv->setTotalsize(totalMsgSize);
 
-  // Make the message a regular message to prevent message handler on the receiver
-  // from intercepting it
-  CMI_ZC_MSGTYPE(copyenv) = CMK_REG_NO_ZC_MSG;
-
   if(ncpyMode == CkNcpyMode::RDMA) {
-    ref = (char *)copyenv + CK_ALIGN(msgsize, 16) + bufsize;
-    setNcpyEmInfo(ref, copyenv, msgsize, numops, forwardMsg, emMode);
+    ncpyEmInfo = (NcpyEmInfo *)((char *)copyenv + CK_ALIGN(msgsize, 16) + bufsize);
+    setNcpyEmInfo(ncpyEmInfo, copyenv, numops, forwardMsg, emMode);
   }
 
   char *buf = (char *)copyenv + CK_ALIGN(msgsize, 16);
 
   CkUnpackMessage(&copyenv);
+
+  // Mark the message to be a SEND_DONE message to prevent message handler on the receiver
+  // from intercepting it and pack pointers when forwarded to peers/children
+  CMI_ZC_MSGTYPE(copyenv) = CMK_ZC_SEND_DONE_MSG;
+
   PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(copyenv))->msgBuf));
   PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(copyenv))->msgBuf);
   up|numops;
+  up|rootNode;
   p|numops;
+  p|rootNode;
 
   // source buffer
   CkNcpyBuffer source;
 
+  bool sendBackToSourceForDereg = false; // used for CMA transfers
+
   for(int i=0; i<numops; i++){
     up|source;
+
+#if CMK_USE_CMA && CMK_REG_REQUIRED
+    if(!sendBackToSourceForDereg && ncpyMode == CkNcpyMode::CMA && source.refAckInfo != NULL)
+      sendBackToSourceForDereg = true;
+#endif
 
     // destination buffer
     CkNcpyBuffer dest((const void *)buf, source.cnt, CK_BUFFER_UNREG);
 
-    performEmApiNcpyTransfer(source, dest, i, t.child_count, ref, extraSize, ncpyMode, emMode);
+    performEmApiNcpyTransfer(source, dest, i, t, ncpyEmInfo, extraSize, ncpyMode, rootNode, emMode);
 
     //Update the CkRdmaWrapper pointer of the new message
     source.ptr = buf;
+
+    source.isRegistered = dest.isRegistered;
+
+    source.regMode = dest.regMode;
+
+    source.deregMode = dest.deregMode;
 
     memcpy(source.layerInfo, dest.layerInfo, layerInfoSize);
 
@@ -754,16 +862,19 @@ envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg
     p|source;
   }
 
-  // Substitute buffer pointers by their offsets from msgBuf to handle migration
-  CkPackRdmaPtrs(((CkMarshallMsg *)EnvToUsr(copyenv))->msgBuf);
 
   if(emMode == ncpyEmApiMode::P2P_SEND) {
     switch(ncpyMode) {
-      case CkNcpyMode::MEMCPY:
-      case CkNcpyMode::CMA   :  return copyenv;
+      case CkNcpyMode::MEMCPY:  return copyenv;
+                                break;
+      case CkNcpyMode::CMA   :  if(sendBackToSourceForDereg) {
+                                  // Send back to source process to de-register
+                                  invokeRemoteNcpyAckHandler(source.pe, (void *)source.refAckInfo, ncpyHandlerIdx::CMA_DEREG_ACK);
+                                }
+                                return copyenv;
                                 break;
 
-      case CkNcpyMode::RDMA  :  performRgets(ref, numops, extraSize);
+      case CkNcpyMode::RDMA  :  performRgets(ncpyEmInfo, numops, extraSize);
                                 break;
 
       default                :  CmiAbort("Invalid transfer mode\n");
@@ -771,7 +882,9 @@ envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg
     }
   } else if(emMode == ncpyEmApiMode::BCAST_SEND) {
     switch(ncpyMode) {
-      case CkNcpyMode::MEMCPY:  CkPackMessage(&copyenv); // Pack message as it will be forwarded to peers
+      case CkNcpyMode::MEMCPY:  // Invoke the bcast Ack Handler after 'numops' memcpy operations are complete
+                                CkAssert(source.refAckInfo != NULL);
+                                CkRdmaEMBcastAckHandler((void *)source.refAckInfo);
                                 forwardMessageToPeerNodes(copyenv, copyenv->getMsgtype());
                                 return copyenv;
                                 break;
@@ -780,7 +893,7 @@ envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg
                                 handleMsgUsingCMAPostCompletionForSendBcast(copyenv, env, source);
                                 break;
 
-      case CkNcpyMode::RDMA  :  performRgets(ref, numops, extraSize);
+      case CkNcpyMode::RDMA  :  performRgets(ncpyEmInfo, numops, extraSize);
                                 break;
 
       default                :  CmiAbort("Invalid transfer mode\n");
@@ -800,56 +913,70 @@ envelope* CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg
  * the destination to perform zerocopy operations as a part of the Zerocopy Entry Method
  * API
  */
-void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg, int numops, void **arrPtrs, CkNcpyBufferPost *postStructs){
+void CkRdmaIssueRgets(envelope *env, void **arrPtrs, int *arrSizes, int arrayIndex, CkNcpyBufferPost *postStructs){
 
-  if(emMode == ncpyEmApiMode::BCAST_SEND)
-    CkAbort("CkRdmaIssueRgets:: topo tree has not been calculated \n");
-
-  // Iterate over the ncpy buffer and either perform the operations
-  int msgsize = env->getTotalsize();
-
+  int numops, rootNode;
   int refSize = 0;
-  char *ref;
+  NcpyEmInfo *ncpyEmInfo = postStructs[0].ncpyEmInfo;
   int layerInfoSize, ncpyObjSize, extraSize;
 
-  CkNcpyMode ncpyMode = findTransferMode(env->getSrcPe(), CkMyPe());
-  if(_topoTree == NULL) CkAbort("CkRdmaIssueRgets:: topo tree has not been calculated \n");
-  CmiSpanningTreeInfo &t = *_topoTree;
+  ncpyEmApiMode emMode = (CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_MSG) ? ncpyEmApiMode::BCAST_RECV : ncpyEmApiMode::P2P_RECV;
+
+  CkNcpyMode ncpyMode = findTransferMode(getSrcPe(env), CkMyPe());
+  CmiSpanningTreeInfo *t = NULL;
 
   layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
 
-  if(ncpyMode == CkNcpyMode::RDMA) {
-    preprocessRdmaCaseForRgets(layerInfoSize, ncpyObjSize, extraSize, refSize, numops);
-    ref = (char *)CmiAlloc(refSize);
-  }
-
-  // Make the message a regular message to prevent message handler on the receiver
-  // from intercepting it
-  if(emMode == ncpyEmApiMode::P2P_RECV)
-    CMI_ZC_MSGTYPE(env) = CMK_ZC_P2P_RECV_DONE_MSG;
-
-  if(ncpyMode == CkNcpyMode::RDMA) {
-    setNcpyEmInfo(ref, env, msgsize, numops, forwardMsg, emMode);
-  }
+  std::vector<int> *tagArray = ncpyEmInfo->tagArray;
+  NcpyBcastRecvPeerAckInfo *peerAckInfo = ncpyEmInfo->peerAckInfo;
 
   PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
   up|numops;
+  up|rootNode;
   p|numops;
+  p|rootNode;
+
+  if(emMode == ncpyEmApiMode::BCAST_SEND || emMode == ncpyEmApiMode::BCAST_RECV) {
+    if(_topoTree == NULL) CkAbort("CkRdmaIssueRgets:: topo tree has not been calculated \n");
+    t = getSpanningTreeInfo(rootNode);
+  }
+
+  if(ncpyMode == CkNcpyMode::RDMA) {
+    preprocessRdmaCaseForRgets(layerInfoSize, ncpyObjSize, extraSize, refSize, numops);
+  }
 
   // source buffer
   CkNcpyBuffer source;
 
+  bool sendBackToSourceForDereg = false;
+
   for(int i=0; i<numops; i++){
     up|source;
 
-    // destination buffer
-    CkNcpyBuffer dest((const void *)arrPtrs[i], source.cnt, postStructs[i].mode);
+    if(source.cnt < arrSizes[i])
+      CkAbort("CkRdmaIssueRgets: Size of the posted buffer > Size of the source buffer\n");
 
-    performEmApiNcpyTransfer(source, dest, i, t.child_count, ref, extraSize, ncpyMode, emMode);
+#if CMK_USE_CMA && CMK_REG_REQUIRED
+    if(!sendBackToSourceForDereg && ncpyMode == CkNcpyMode::CMA && source.refAckInfo != NULL)
+      sendBackToSourceForDereg = true;
+#endif
+
+    // destination buffer
+    CkNcpyBuffer dest((const void *)arrPtrs[i], arrSizes[i], postStructs[i].regMode, postStructs[i].deregMode);
+
+    performEmApiNcpyTransfer(source, dest, i, t, ncpyEmInfo, extraSize, ncpyMode, rootNode, emMode);
 
     //Update the CkRdmaWrapper pointer of the new message
     source.ptr = arrPtrs[i];
+
+    source.isRegistered = dest.isRegistered;
+
+    source.regMode = dest.regMode;
+
+    source.deregMode = dest.deregMode;
+
+    source.ncpyEmInfo = postStructs[i].ncpyEmInfo;
 
     memcpy(source.layerInfo, dest.layerInfo, layerInfoSize);
 
@@ -858,12 +985,25 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg, int
 
 
   if(emMode == ncpyEmApiMode::P2P_RECV) {
+    // Make the message a regular message to prevent message handler on the receiver
+    // from intercepting it
+    CMI_ZC_MSGTYPE(env) = CMK_REG_NO_ZC_MSG;
+
     switch(ncpyMode) {
-      case CkNcpyMode::MEMCPY:
-      case CkNcpyMode::CMA   :  enqueueNcpyMessage(CkMyPe(), env);
+      case CkNcpyMode::MEMCPY:  QdCreate(1);
+                                enqueueNcpyMessage(CkMyPe(), env);
+                                CmiFree(ncpyEmInfo);
+                                break;
+      case CkNcpyMode::CMA   :  if(sendBackToSourceForDereg) {
+                                  // Send back to source process to de-register
+                                  invokeRemoteNcpyAckHandler(source.pe, (void *)source.refAckInfo, ncpyHandlerIdx::CMA_DEREG_ACK);
+                                }
+                                QdCreate(1);
+                                enqueueNcpyMessage(CkMyPe(), env);
+                                CmiFree(ncpyEmInfo);
                                 break;
 
-      case CkNcpyMode::RDMA  :  performRgets(ref, numops, extraSize);
+      case CkNcpyMode::RDMA  :  performRgets(ncpyEmInfo, numops, extraSize);
                                 break;
 
       default                :  CmiAbort("Invalid transfer mode\n");
@@ -871,12 +1011,16 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg, int
     }
   } else if(emMode == ncpyEmApiMode::BCAST_RECV) {
     switch(ncpyMode) {
-      case CkNcpyMode::MEMCPY:  handleMsgOnChildPostCompletionForRecvBcast(env);
+      case CkNcpyMode::MEMCPY:  // Invoke the bcast Ack Handler after 'numops' memcpy operations are complete
+                                CkAssert(source.refAckInfo != NULL);
+                                CkRdmaEMBcastAckHandler((void *)source.refAckInfo);
+                                handleMsgOnChildPostCompletionForRecvBcast(env, nullptr);
                                 break;
 
-      case CkNcpyMode::CMA   :  if(t.child_count == 0) {
-                                  sendAckMsgToParent(env);
-                                  handleMsgOnChildPostCompletionForRecvBcast(env);
+      case CkNcpyMode::CMA   :  // Invoke the Ack handler on the parent node to signal completion
+                                sendAckMsgToParent(env);
+                                if(t->child_count == 0) {
+                                  handleMsgOnChildPostCompletionForRecvBcast(env, nullptr);
                                 } else {
                                   // Allocate a structure NcpyBcastInterimAckInfo to maintain state for ack handling
                                   NcpyBcastInterimAckInfo *bcastAckInfo = allocateInterimNodeAckObj(env, NULL, CkMyPe());
@@ -884,7 +1028,7 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg, int
                                 }
                                 break;
 
-      case CkNcpyMode::RDMA  :  performRgets(ref, numops, extraSize);
+      case CkNcpyMode::RDMA  :  performRgets(ncpyEmInfo, numops, extraSize);
                                 break;
 
       default                :  CmiAbort("Invalid transfer mode\n");
@@ -899,22 +1043,117 @@ void CkRdmaIssueRgets(envelope *env, ncpyEmApiMode emMode, void *forwardMsg, int
 
 /********************** Zerocopy Bcast Entry Method API - Utility functions ***************/
 
-// Method called on the bcast source to store some information for ack handling
-void CkRdmaPrepareBcastMsg(envelope *env) {
+void CkRdmaPrepareZCMsg(envelope *env, int node) {
+  if(CMI_IS_ZC_BCAST(env)) {
+    CkRdmaPrepareBcastMsg(env);
 
-  int numops;
+// De-registration in this case is not applicable for non-CMA supported layers or layers not requiring registration
+#if CMK_USE_CMA && CMK_REG_REQUIRED
+  } else if(CMI_IS_ZC_P2P(env) && env->getSrcPe() == CkMyPe()) {
+    // The condition env->getSrcPe() == CkMyPe() was added because messages for chare arrays
+    // are forwarded after migration and there is a possibility of routing messages through
+    // the chare's previous home PE. In such cases, we don't want to do anything, i.e. we prepare
+    // the P2P message only on the source buffer's PE (when env->getSrcPe() == CkMyPe())
+    CkNcpyMode transferMode = findTransferModeWithNodes(CkMyNode(), node);
+    if(transferMode == CkNcpyMode::CMA)
+      CkRdmaPrepareP2PMsg(env);
+#endif
+  }
+}
+
+#if CMK_USE_CMA && CMK_REG_REQUIRED
+void CkRdmaEMDeregAndAckDirectHandler(void *ack) {
+
+  CkNcpyBuffer buffInfo;
+  PUP::fromMem implP(ack);
+
+  implP|buffInfo;
+
+  // De-register source buffer
+  deregisterBuffer(buffInfo);
+
+  // Invoke Callback
+  invokeCallback(buffInfo);
+}
+
+void CkRdmaEMDeregAndAckHandler(void *ack) {
+
+  NcpyP2PAckInfo *p2pAckInfo = (NcpyP2PAckInfo *)ack;
+
+  CkEnforce(p2pAckInfo->numOps > 0);
+
+  for(int i = 0; i < p2pAckInfo->numOps; i++) {
+    CkNcpyBuffer &source = p2pAckInfo->src[i];
+
+    // De-register source buffer
+    deregisterBuffer(source);
+
+    // Invoke Callback
+    invokeCallback(source);
+  }
+}
+
+void CkRdmaPrepareP2PMsg(envelope *env) {
+  int numops, rootNode;
   CkUnpackMessage(&env);
   PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
 
   up|numops;
+  up|rootNode;
+
+  int numToBeDeregOps = 0;
+
+  // Determine number of zc ops for which de-reg is required
+  for(int i=0; i<numops; i++) {
+    CkNcpyBuffer source;
+    up|source;
+    if(isDeregReady(source))
+      numToBeDeregOps++;
+  }
+
+
+  if(numToBeDeregOps > 0) { // Allocate structure only if numToBeDeregOps > 0
+    up.reset(); // Reset PUP::fromMem to the original buffer
+    up|numops;
+    up|rootNode;
+    p|numops;
+    p|rootNode;
+
+    // Allocate a structure to de-register after completion and invoke acks
+    NcpyP2PAckInfo *p2pAckInfo = (NcpyP2PAckInfo *)CmiAlloc(sizeof(NcpyP2PAckInfo) + numops * sizeof(CkNcpyBuffer));
+    p2pAckInfo->numOps  = numops;
+
+    for(int i=0; i<numops; i++) {
+      CkNcpyBuffer source;
+      up|source;
+      source.refAckInfo = p2pAckInfo; // Update refAckInfo with p2pAckInfo
+      p2pAckInfo->src[i] = source;      // Store the source into the allocated structure
+      p|source;
+    }
+  }
+  CkPackMessage(&env);
+}
+#endif
+
+// Method called on the bcast source to store some information for ack handling
+void CkRdmaPrepareBcastMsg(envelope *env) {
+
+  int numops, rootNode;
+  CkUnpackMessage(&env);
+  PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
+  PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
+
+  up|numops;
+  up|rootNode;
   p|numops;
+  p|rootNode;
 
   NcpyBcastRootAckInfo *bcastAckInfo = (NcpyBcastRootAckInfo *)CmiAlloc(sizeof(NcpyBcastRootAckInfo) + numops * sizeof(CkNcpyBuffer));
 
-  CmiSpanningTreeInfo &t = *_topoTree;
+  CmiSpanningTreeInfo &t = *(getSpanningTreeInfo(CkMyNode()));
   bcastAckInfo->numChildren = t.child_count + 1;
-  bcastAckInfo->counter = 0;
+  bcastAckInfo->setCounter(0);
   bcastAckInfo->isRoot  = true;
   bcastAckInfo->numops  = numops;
   bcastAckInfo->pe = CkMyPe();
@@ -925,7 +1164,7 @@ void CkRdmaPrepareBcastMsg(envelope *env) {
 
     bcastAckInfo->src[i] = source;
 
-    source.bcastAckInfo = bcastAckInfo;
+    source.refAckInfo = bcastAckInfo;
 
     p|source;
   }
@@ -935,14 +1174,16 @@ void CkRdmaPrepareBcastMsg(envelope *env) {
 // Method called to extract the parent bcastAckInfo from the received message for ack handling
 // Requires message to be unpacked
 const void *getParentBcastAckInfo(void *msg, int &srcPe) {
-  int numops;
+  int numops, rootNode;
   CkNcpyBuffer source;
   envelope *env = (envelope *)msg;
   PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
 
   up|numops;
+  up|rootNode;
   p|numops;
+  p|rootNode;
 
   CkAssert(numops >= 1);
 
@@ -950,13 +1191,16 @@ const void *getParentBcastAckInfo(void *msg, int &srcPe) {
   p|source;
 
   srcPe = source.pe;
-  return source.bcastAckInfo;
+  return source.refAckInfo;
 }
 
 // Called only on intermediate nodes
 // Allocate a NcpyBcastInterimAckInfo and return it
 NcpyBcastInterimAckInfo *allocateInterimNodeAckObj(envelope *myEnv, envelope *myChildEnv, int pe) {
-  CmiSpanningTreeInfo &t = *_topoTree;
+
+  CkUnpackMessage(&myEnv);
+  CmiSpanningTreeInfo &t = *(getSpanningTreeInfo(getRootNode(myEnv)));
+  CkPackMessage(&myEnv);
 
   // Allocate a NcpyBcastInterimAckInfo object
   NcpyBcastInterimAckInfo *bcastAckInfo = (NcpyBcastInterimAckInfo *)CmiAlloc(sizeof(NcpyBcastInterimAckInfo));
@@ -969,10 +1213,12 @@ NcpyBcastInterimAckInfo *allocateInterimNodeAckObj(envelope *myEnv, envelope *my
 
   // Recv Bcast API uses myEnv as myChildEnv (and myChildEnv is NULL)
   bcastAckInfo->isRecv = (myChildEnv == NULL);
-  bcastAckInfo->isArray = (myEnv->getMsgtype() == ForArrayEltMsg);
+  bcastAckInfo->isArray = (myEnv->getMsgtype() == ArrayBcastFwdMsg);
 
   // initialize derived calss NcpyBcastInterimAckInfo fields
   bcastAckInfo->msg = myEnv; // this message will be enqueued after the completion of all operations
+
+  bcastAckInfo->ncpyEmInfo = nullptr;
 
   return bcastAckInfo;
 }
@@ -981,9 +1227,10 @@ NcpyBcastInterimAckInfo *allocateInterimNodeAckObj(envelope *myEnv, envelope *my
 void CkRdmaEMBcastAckHandler(void *ack) {
   NcpyBcastAckInfo *bcastAckInfo = (NcpyBcastAckInfo *)ack;
 
-  bcastAckInfo->counter++; // Increment counter to indicate that another child was completed
-
-  if(bcastAckInfo->counter == bcastAckInfo->numChildren) {
+  // Increment counter to indicate that another child was completed
+  // Since incCounter() is equivalent to counter++, it returns the value of 'counter' before incrementing it by 1.
+  // For that reason, the comparison is performed with bcastAckInfo->incCounter() + 1 to compare with the updated value
+  if(bcastAckInfo->incCounter() + 1 == bcastAckInfo->numChildren) {
     // All child nodes have completed RGETs
 
     // TODO: replace with a swtich with 3 cases
@@ -992,6 +1239,12 @@ void CkRdmaEMBcastAckHandler(void *ack) {
       NcpyBcastRootAckInfo *bcastRootAckInfo = (NcpyBcastRootAckInfo *)(bcastAckInfo);
       // invoke the callback with the pointer
       for(int i=0; i<bcastRootAckInfo->numops; i++) {
+#if CMK_REG_REQUIRED
+        // Deregister source buffer respecting source buffer's dereg mode
+        if(isDeregReady(bcastRootAckInfo->src[i]))
+          deregisterBuffer(bcastRootAckInfo->src[i]);
+#endif
+
         invokeCallback(&(bcastRootAckInfo->src[i].cb),
                        bcastRootAckInfo->pe,
                        bcastRootAckInfo->src[i]);
@@ -1000,72 +1253,41 @@ void CkRdmaEMBcastAckHandler(void *ack) {
       CmiFree(bcastRootAckInfo);
 
     } else {
-      CmiSpanningTreeInfo &t = *_topoTree;
 
       NcpyBcastInterimAckInfo *bcastInterimAckInfo = (NcpyBcastInterimAckInfo *)(bcastAckInfo);
+      // This node should send a message to its parent
+      envelope *myMsg = (envelope *)(bcastInterimAckInfo->msg);
+
+      CkUnpackMessage(&myMsg);
+      CmiSpanningTreeInfo &t = *(getSpanningTreeInfo(getRootNode(myMsg)));
+      CkPackMessage(&myMsg);
 
       if(bcastInterimAckInfo->isRecv)  { // bcast post api
-        // This node should send a message to its parent
-        envelope *myMsg = (envelope *)(bcastInterimAckInfo->msg);
-
         // deregister using the message
 #if CMK_REG_REQUIRED
-        deregisterMemFromMsg(myMsg);
+        deregisterMemFromMsg(myMsg, true);
 #endif
-        // send a message to the parent to signal completion
-        int srcPe;
         CkArray *mgr = NULL;
-        envelope *env = (envelope *)bcastInterimAckInfo->msg;
-        CkUnpackMessage(&env); // Unpack message before sending it to getParentBcastAckInfo
-        char *ref = (char *)(getParentBcastAckInfo(bcastInterimAckInfo->msg, srcPe));
-        CkPackMessage(&env);
-
-        NcpyBcastInterimAckInfo *ncpyBcastAck = (NcpyBcastInterimAckInfo *)ref;
-        CmiInvokeBcastAckHandler(ncpyBcastAck->origPe, ncpyBcastAck->parentBcastAckInfo);
-
         CMI_ZC_MSGTYPE(myMsg) = CMK_ZC_BCAST_RECV_DONE_MSG;
 
         CkUnpackMessage(&myMsg); // DO NOT REMOVE THIS
 
         if(bcastInterimAckInfo->isArray) {
-          myMsg->setMsgtype(ForArrayEltMsg);
+          handleArrayMsgOnChildPostCompletionForRecvBcast(myMsg, bcastInterimAckInfo->ncpyEmInfo);
+        } else if(myMsg->getMsgtype() == ForBocMsg) {
+          handleGroupMsgOnChildPostCompletionForRecvBcast(myMsg, bcastInterimAckInfo->ncpyEmInfo);
+        } else if(myMsg->getMsgtype() == ForNodeBocMsg) {
+          handleNGMsgOnChildPostCompletionForRecvBcast(myMsg, bcastInterimAckInfo->ncpyEmInfo);
+        }
 
-          mgr = getArrayMgrFromMsg(myMsg);
-          mgr->forwardZCMsgToOtherElems(myMsg);
-        }
-#if CMK_SMP
-        if(CmiMyNodeSize() > 1 && myMsg->getMsgtype() != ForNodeBocMsg) {
-          sendRecvDoneMsgToPeers(myMsg, mgr);
-        } else {
-          if(myMsg->getMsgtype() == ForArrayEltMsg) {
-            myMsg->setMsgtype(ForBocMsg);
-            myMsg->getsetArrayEp() = mgr->getRecvBroadcastEpIdx();
-          }
-          enqueueNcpyMessage(bcastAckInfo->pe, myMsg);
-        }
-#else
-        CMI_ZC_MSGTYPE(myMsg) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
+        CmiFree(bcastInterimAckInfo);
 
-        if(myMsg->getMsgtype() == ForArrayEltMsg) {
-          myMsg->setMsgtype(ForBocMsg);
-          myMsg->getsetArrayEp() = mgr->getRecvBroadcastEpIdx();
-        }
-        enqueueNcpyMessage(bcastAckInfo->pe, myMsg);
-#endif
       } else { // bcast send api
-
-        envelope *myMsg = (envelope *)(bcastInterimAckInfo->msg);
 
         // deregister using the message
 #if CMK_REG_REQUIRED
-        deregisterMemFromMsg(myMsg);
+        deregisterMemFromMsg(myMsg, false);
 #endif
-        // send a message to the parent to signal completion
-        envelope *env = (envelope *)bcastInterimAckInfo->msg;
-        CkUnpackMessage(&env); // Unpack message before sending it to getParentBcastAckInfo
-        sendAckMsgToParent(env);
-        CkPackMessage(&env);
-
         forwardMessageToPeerNodes(myMsg, myMsg->getMsgtype());
 
         // enquque message to execute EM on the intermediate node
@@ -1081,26 +1303,67 @@ void CkRdmaEMBcastAckHandler(void *ack) {
 // Method forwards a message to all the children
 void forwardMessageToChildNodes(envelope *myChildrenMsg, UChar msgType) {
 #if CMK_SMP && CMK_NODE_QUEUE_AVAILABLE
-  if(msgType == ForNodeBocMsg) {
-    // Node level forwarding for nodegroup bcasts
-    CmiForwardNodeBcastMsg(myChildrenMsg->getTotalsize(), (char *)myChildrenMsg);
-  } else
-#endif
+  // Node level forwarding for nodegroup bcasts
+  CmiForwardNodeBcastMsg(myChildrenMsg->getTotalsize(), (char *)myChildrenMsg);
+#else
   // Proc level forwarding
   CmiForwardProcBcastMsg(myChildrenMsg->getTotalsize(), (char *)myChildrenMsg);
+#endif
 }
 
 // Method forwards a message to all the peer nodes
 void forwardMessageToPeerNodes(envelope *myMsg, UChar msgType) {
 #if CMK_SMP
 #if CMK_NODE_QUEUE_AVAILABLE
-  if(msgType == ForBocMsg)
+  if(msgType == ForBocMsg) {
 #endif // CMK_NODE_QUEUE_AVAILABLE
+    if(CMI_ZC_MSGTYPE(myMsg) == CMK_ZC_SEND_DONE_MSG)
+      CkPackMessage(&myMsg);
     CmiForwardMsgToPeers(myMsg->getTotalsize(), (char *)myMsg);
+#if CMK_NODE_QUEUE_AVAILABLE
+  }
+#endif // CMK_NODE_QUEUE_AVAILABLE
 #endif
 }
 
 void handleBcastEntryMethodApiCompletion(NcpyOperationInfo *info){
+
+// The following CMK_REG_REQUIRED is only used by the UCX layer. For CMK_REG_REQUIRED
+// layers (GNI, OFI and Verbs), the code simply returns from LrtsInvokeRemoteDeregAckHandler.
+#if CMK_REG_REQUIRED
+
+  NcpyEmBufferInfo *emBuffInfo = (NcpyEmBufferInfo *)(info->refPtr);
+
+  char *ref = (char *)(emBuffInfo);
+
+  int layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
+  int ncpyObjSize = getNcpyOpInfoTotalSize(
+                    layerInfoSize,
+                    sizeof(CkCallback),
+                    layerInfoSize,
+                    0);
+
+
+  NcpyEmInfo *ncpyEmInfo = (NcpyEmInfo *)(ref - (emBuffInfo->index) * (sizeof(NcpyEmBufferInfo) + ncpyObjSize - sizeof(NcpyOperationInfo)) - sizeof(NcpyEmInfo));
+
+  int rootNode = getRootNode((envelope *)ncpyEmInfo->msg);
+  CmiSpanningTreeInfo *t = getSpanningTreeInfo(rootNode);
+
+  // De-register source for reverse operations when regMode == UNREG and deregMode == DEREG
+  // on the first level of intermediate nodes i.e. t->parent == rootNode.
+  // This is only required for the UCX layer since the UCX layer (unlike GNI, OFI and Verbs) doesn't
+  // implement the GET for an UNREG source with a REG and PUT operation, since PUT doesn't guarantee
+  // remote destination data transfer completion. In the UCX layer, since a GET for an UNREG source
+  // is implemented with a remote REG and send-back mechanism, followed by a GET, it is important
+  // to de-register the root's source buffer now.
+  if(t->parent == rootNode &&
+     info->isSrcRegistered == 1 &&
+     info->srcRegMode == CK_BUFFER_UNREG &&
+     info->srcDeregMode == CK_BUFFER_DEREG) {
+    CmiInvokeRemoteDeregAckHandler(info->srcPe, info);
+  }
+#endif
+
   if(info->ackMode == CMK_SRC_DEST_ACK || info->ackMode == CMK_DEST_ACK) {
     // invoking the entry method
     // Invoke the ackhandler function to update the counter
@@ -1111,26 +1374,39 @@ void handleBcastEntryMethodApiCompletion(NcpyOperationInfo *info){
 void handleBcastReverseEntryMethodApiCompletion(NcpyOperationInfo *info) {
   if(info->ackMode == CMK_SRC_DEST_ACK || info->ackMode == CMK_DEST_ACK) {
     // Invoke the remote ackhandler function
-    CmiInvokeRemoteAckHandler(info->destPe, info->refPtr);
+    invokeRemoteNcpyAckHandler(info->destPe, info->refPtr, ncpyHandlerIdx::EM_ACK);
   }
+#if CMK_REG_REQUIRED
+  // De-register source for reverse operations when regMode == UNREG and deregMode == DEREG on the root node
+  if(info->rootNode == CkMyNode())
+    if(info->isSrcRegistered == 1 && info->srcRegMode == CK_BUFFER_UNREG && info->srcDeregMode == CK_BUFFER_DEREG)
+      deregisterSrcBuffer(info);
+#endif
+
   if(info->freeMe == CMK_FREE_NCPYOPINFO)
     CmiFree(info);
 }
 
-void deregisterMemFromMsg(envelope *env) {
+void deregisterMemFromMsg(envelope *env, bool isRecv) {
   CkUnpackMessage(&env);
   PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
-  int numops;
+  int numops, rootNode;
   up|numops;
+  up|rootNode;
   p|numops;
+  p|rootNode;
 
   CkNcpyBuffer dest;
 
   for(int i=0; i<numops; i++){
     up|dest;
-    // De-register the destination buffer
-    CmiDeregisterMem(dest.ptr, (char *)dest.layerInfo + CmiGetRdmaCommonInfoSize(), dest.pe, dest.mode);
+
+    // De-register the destination buffer when isRecv is false (i.e. using ZC Bcast Send API) or
+    // when isRecv is true, respect deregMode and de-register
+    if( (!isRecv) || (isRecv && dest.deregMode == CMK_BUFFER_DEREG) )
+      deregisterBuffer(dest);
+
     p|dest;
   }
   CkPackMessage(&env);
@@ -1139,12 +1415,15 @@ void deregisterMemFromMsg(envelope *env) {
 /****************************** Zerocopy BCAST EM SEND API Functions ***********************/
 
 void handleMsgUsingCMAPostCompletionForSendBcast(envelope *copyenv, envelope *env, CkNcpyBuffer &source) {
-  CmiSpanningTreeInfo &t = *_topoTree;
+
+  CkUnpackMessage(&env);
+  CmiSpanningTreeInfo &t = *(getSpanningTreeInfo(getRootNode(env)));
+  CkPackMessage(&env);
+
+  // Send an ack message to the parent node to signal completion
+  invokeRemoteNcpyAckHandler(source.pe, (void *)source.refAckInfo, ncpyHandlerIdx::BCAST_ACK);
 
   if(t.child_count == 0) { // child node
-
-    // Send a message to the parent node to signal completion
-    CmiInvokeBcastAckHandler(source.pe, (void *)source.bcastAckInfo);
 
     // Only forwarding is to peer PEs
     forwardMessageToPeerNodes(copyenv, copyenv->getMsgtype());
@@ -1166,14 +1445,14 @@ void handleMsgUsingCMAPostCompletionForSendBcast(envelope *copyenv, envelope *en
 }
 
 void processBcastSendEmApiCompletion(NcpyEmInfo *ncpyEmInfo, int destPe) {
-  CmiSpanningTreeInfo &t = *_topoTree;
   envelope *myEnv = (envelope *)(ncpyEmInfo->msg);
+  CmiSpanningTreeInfo &t = *(getSpanningTreeInfo(getRootNode(myEnv)));
+
+  CkUnpackMessage(&myEnv); // Unpack message before sending it to sendAckMsgToParent
+  sendAckMsgToParent(myEnv); // Send a ack message to the parent node to signal completion
+  CkPackMessage(&myEnv);
 
   if(t.child_count == 0) { // Child Node
-
-    CkUnpackMessage(&myEnv); // Unpack message before sending it to sendAckMsgToParent
-    sendAckMsgToParent(myEnv);
-    CkPackMessage(&myEnv);
 
     // Since I am a child node, no more forwarding to any more childing
     // Only forwarding is to peer PEs
@@ -1200,22 +1479,27 @@ void processBcastSendEmApiCompletion(NcpyEmInfo *ncpyEmInfo, int destPe) {
 // Method called on intermediate nodes after RGET to switch old source pointers with my pointers
 void CkReplaceSourcePtrsInBcastMsg(envelope *prevEnv, envelope *env, void *bcastAckInfo, int origPe) {
 
-  int numops;
+  int numops, rootNode;
 
   CkUnpackMessage(&prevEnv);
   PUP::toMem p_prev((void *)(((CkMarshallMsg *)EnvToUsr(prevEnv))->msgBuf));
   PUP::fromMem up_prev((void *)((CkMarshallMsg *)EnvToUsr(prevEnv))->msgBuf);
 
   CkUnpackMessage(&env);
-  CkUnpackRdmaPtrs((((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
 
   up_prev|numops;
   up|numops;
 
+  up_prev|rootNode;
+  up|rootNode;
+
   p|numops;
   p_prev|numops;
+
+  p|rootNode;
+  p_prev|rootNode;
 
   for(int i=0; i<numops; i++){
     // source buffer
@@ -1227,16 +1511,16 @@ void CkReplaceSourcePtrsInBcastMsg(envelope *prevEnv, envelope *env, void *bcast
     // unpack from current message
     up|source;
 
-    const void *bcastAckInfoTemp = source.bcastAckInfo;
+    const void *bcastAckInfoTemp = source.refAckInfo;
     int orig_source_pe = source.pe;
 
-    source.bcastAckInfo = bcastAckInfo;
+    source.refAckInfo = bcastAckInfo;
     source.pe = origPe;
 
     // pack updated CkNcpyBuffer into previous message
     p_prev|source;
 
-    source.bcastAckInfo = bcastAckInfoTemp;
+    source.refAckInfo = bcastAckInfoTemp;
     source.pe = orig_source_pe;
 
     // pack back CkNcpyBuffer into current message
@@ -1245,60 +1529,44 @@ void CkReplaceSourcePtrsInBcastMsg(envelope *prevEnv, envelope *env, void *bcast
 
   CkPackMessage(&prevEnv);
 
-  CkPackRdmaPtrs((((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   CkPackMessage(&env);
 }
 
 /****************************** Zerocopy BCAST EM POST API Functions ***********************/
 
 void processBcastRecvEmApiCompletion(NcpyEmInfo *ncpyEmInfo, int destPe) {
-  CmiSpanningTreeInfo &t = *_topoTree;
+
   envelope *myEnv = (envelope *)(ncpyEmInfo->msg);
 
-  if(t.child_count == 0) {  // Child Node
-    // Send message to all peer elements on this PE
-    // Send a message to the worker thread
+  // Send message to all peer elements on this PE
+  // Send a message to the worker thread
 #if CMK_SMP
-    CmiInvokeBcastPostAckHandler(destPe, ncpyEmInfo->msg);
+  invokeRemoteNcpyAckHandler(destPe, ncpyEmInfo, ncpyHandlerIdx::BCAST_POST_ACK);
 #else
-    CkRdmaEMBcastPostAckHandler(ncpyEmInfo->msg);
+  CkRdmaEMBcastPostAckHandler(ncpyEmInfo);
 #endif
-    CmiFree(ncpyEmInfo); // Allocated in CkRdmaIssueRgets
-
-  } else { // Intermediate Node
-
-    // Send a message to the worker thread
-    // NOTE:: ncpyEmInfo is sent instead of ncpyEmInfo->msg
-#if CMK_SMP
-    CmiInvokeBcastPostAckHandler(destPe, ncpyEmInfo);
-#else
-    CkRdmaEMBcastPostAckHandler(ncpyEmInfo);
-#endif
-  }
 }
 
 void CkRdmaEMBcastPostAckHandler(void *msg) {
+  NcpyEmInfo *ncpyEmInfo = (NcpyEmInfo *)(msg);
+  envelope *env = (envelope *)(ncpyEmInfo->msg);
 
-  CmiSpanningTreeInfo &t = *_topoTree;
+  CmiSpanningTreeInfo &t = *(getSpanningTreeInfo(getRootNode(env)));
 
-  // send a message to your parents if you are a child node
+  // send an ack message to your parent node
+  sendAckMsgToParent(env);
+
   if(t.child_count == 0) {
 
     // Send message to all peer elements on this PE
-    envelope *env = (envelope *)(msg);
-    sendAckMsgToParent(env);
-    handleMsgOnChildPostCompletionForRecvBcast(env);
+    handleMsgOnChildPostCompletionForRecvBcast(env, ncpyEmInfo);
 
   } else if(t.child_count !=0 && t.parent != -1) {
 
-    NcpyEmInfo *ncpyEmInfo = (NcpyEmInfo *)(msg);
-    envelope *env = (envelope *)(ncpyEmInfo->msg);
-
     // Allocate a structure NcpyBcastInterimAckInfo to maintain state for ack handling
     NcpyBcastInterimAckInfo *bcastAckInfo = allocateInterimNodeAckObj(env, NULL, ncpyEmInfo->pe);
+    bcastAckInfo->ncpyEmInfo = ncpyEmInfo;
     handleMsgOnInterimPostCompletionForRecvBcast(env, bcastAckInfo, ncpyEmInfo->pe);
-
-    CmiFree(ncpyEmInfo); // Allocated in CkRdmaIssueRgets
 
   } else {
     CmiAbort("parent node reaching CkRdmaEMBcastPostAckHandler\n");
@@ -1308,14 +1576,16 @@ void CkRdmaEMBcastPostAckHandler(void *msg) {
 
 void CkReplaceSourcePtrsInBcastMsg(envelope *env, NcpyBcastInterimAckInfo *bcastAckInfo, int origPe) {
 
-  int numops;
+  int numops, rootNode;
   CkUnpackMessage(&env);
   //CkUnpackRdmaPtrs((((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
 
   up|numops;
+  up|rootNode;
   p|numops;
+  p|rootNode;
 
   // source buffer
   CkNcpyBuffer source;
@@ -1324,13 +1594,7 @@ void CkReplaceSourcePtrsInBcastMsg(envelope *env, NcpyBcastInterimAckInfo *bcast
     // unpack from current message
     up|source;
 
-    const void *bcastAckInfoTemp = source.bcastAckInfo;
-    int orig_source_pe = source.pe;
-
-    bcastAckInfo->parentBcastAckInfo = (void *)bcastAckInfoTemp;
-    bcastAckInfo->origPe = orig_source_pe;
-
-    source.bcastAckInfo = bcastAckInfo;
+    source.refAckInfo = bcastAckInfo;
     source.pe = origPe;
 
     // pack back CkNcpyBuffer into current message
@@ -1339,77 +1603,16 @@ void CkReplaceSourcePtrsInBcastMsg(envelope *env, NcpyBcastInterimAckInfo *bcast
 
   // CkPackRdmaPtrs((((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
   CkPackMessage(&env);
+
+#if !CMK_SMP || !CMK_NODE_QUEUE_AVAILABLE
+  CMI_SET_BROADCAST_ROOT(env, rootNode+1);
+#endif
 }
+
 
 #if CMK_SMP
-void updatePeerCounterAndPush(envelope *env) {
-  int pe;
-  int numops;
-
-  CkUnpackMessage(&env);
-  PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
-  PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
-
-  up|numops;
-  p|numops;
-
-  CkNcpyBuffer source;
-
-  up|source;
-
-  pe = CmiNodeFirst(CmiMyNode());
-
-  void *ref = (void *)source.bcastAckInfo;
-  NcpyBcastRecvPeerAckInfo *peerAckInfo = (NcpyBcastRecvPeerAckInfo *)ref;
-  source.bcastAckInfo = peerAckInfo->bcastAckInfo;
-
-  p|source;
-  CkPackMessage(&env);
-  CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
-  CmiSpanningTreeInfo &t = *_topoTree;
-  peerAckInfo->decNumPeers();
-  if(peerAckInfo->getNumPeers() == 0) {
-    CmiPushPE(CmiRankOf(peerAckInfo->peerParentPe), env);
-  }
-}
-
 void sendRecvDoneMsgToPeers(envelope *env, CkArray *mgr) {
 
-  CmiSpanningTreeInfo &t = *_topoTree;
-
-  // Allocate a struct for handling peer acks
-  NcpyBcastRecvPeerAckInfo *peerAckInfo = new NcpyBcastRecvPeerAckInfo();
-
-  // Find how many peers I have
-  peerAckInfo->setNumPeers(CmiMyNodeSize() - 1);
-  peerAckInfo->msg = (void *)env;
-  peerAckInfo->peerParentPe = CmiMyPe();
-
-  int numops;
-
-  // Replace bcastAckInfo with peerAckInfo
-  CkUnpackMessage(&env);
-  PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
-  PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
-
-  up|numops;
-  p|numops;
-
-  CkNcpyBuffer source;
-
-  up|source;
-
-  peerAckInfo->bcastAckInfo = (void *)source.bcastAckInfo;
-  source.bcastAckInfo = peerAckInfo;
-
-  p|source;
-
-  CkPackMessage(&env);
-
-  if(env->getMsgtype() == ForArrayEltMsg) {
-    env->setMsgtype(ForBocMsg);
-    env->getsetArrayEp() = mgr->getRecvBroadcastEpIdx();
-  }
   CmiForwardMsgToPeers(env->getTotalsize(), (char *)env);
 }
 #endif
@@ -1422,19 +1625,34 @@ void sendAckMsgToParent(envelope *env)  {
   char *ref = (char *)getParentBcastAckInfo(env,srcPe);
 
   // Invoke BcastAckHandler on the parent node to notify completion
-  CmiInvokeBcastAckHandler(srcPe, ref);
+  invokeRemoteNcpyAckHandler(srcPe, ref, ncpyHandlerIdx::BCAST_ACK);
 }
 
 CkArray* getArrayMgrFromMsg(envelope *env) {
+
   CkArray *mgr = NULL;
-  CkGroupID gId = env->getArrayMgr();
+  CkGroupID gId = env->getGroupNum();
   IrrGroup *obj = _getCkLocalBranchFromGroupID(gId);
   CkAssert(obj!=NULL);
   mgr = (CkArray *)obj;
   return mgr;
 }
 
-void handleArrayMsgOnChildPostCompletionForRecvBcast(envelope *env) {
+void freeNcpyEmInfo(NcpyEmInfo *ncpyEmInfo) {
+  if(ncpyEmInfo) {
+    if(ncpyEmInfo->peerAckInfo)
+      delete ncpyEmInfo->peerAckInfo;
+
+    if(ncpyEmInfo->tagArray)
+      delete [] ncpyEmInfo->tagArray;
+
+    CmiFree(ncpyEmInfo);
+  }
+}
+
+void handleArrayMsgOnChildPostCompletionForRecvBcast(envelope *env, NcpyEmInfo *ncpyEmInfo) {
+
+  CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_DONE_MSG;
   CkArray *mgr = getArrayMgrFromMsg(env);
   mgr->forwardZCMsgToOtherElems(env);
 
@@ -1444,14 +1662,17 @@ void handleArrayMsgOnChildPostCompletionForRecvBcast(envelope *env) {
   } else
 #endif
   {
-    CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
-    env->setMsgtype(ForBocMsg);
-    env->getsetArrayEp() = mgr->getRecvBroadcastEpIdx();
-    CmiHandleMessage(env);
+    if(mgr->getNumLocalElems() == 1) { // this is the only element
+      CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
+      QdCreate(1);
+      CmiHandleMessage(env);
+      freeNcpyEmInfo(ncpyEmInfo);
+    }
   }
+  //TODO: Equeue the basic message if there are no elements
 }
 
-void handleGroupMsgOnChildPostCompletionForRecvBcast(envelope *env) {
+void handleGroupMsgOnChildPostCompletionForRecvBcast(envelope *env, NcpyEmInfo *ncpyEmInfo) {
   CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_DONE_MSG;
 #if CMK_SMP
   if(CmiMyNodeSize() > 1) {
@@ -1460,26 +1681,30 @@ void handleGroupMsgOnChildPostCompletionForRecvBcast(envelope *env) {
 #endif
   {
     CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
+    QdCreate(1);
     CmiHandleMessage(env);
+    freeNcpyEmInfo(ncpyEmInfo);
   }
 }
 
-void handleNGMsgOnChildPostCompletionForRecvBcast(envelope *env) {
+void handleNGMsgOnChildPostCompletionForRecvBcast(envelope *env, NcpyEmInfo *ncpyEmInfo) {
   CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
+  QdCreate(1);
   CmiHandleMessage(env);
+  freeNcpyEmInfo(ncpyEmInfo);
 }
 
-void handleMsgOnChildPostCompletionForRecvBcast(envelope *env) {
+void handleMsgOnChildPostCompletionForRecvBcast(envelope *env, NcpyEmInfo *ncpyEmInfo) {
   switch(env->getMsgtype()) {
 
-    case ForArrayEltMsg : handleArrayMsgOnChildPostCompletionForRecvBcast(env);
-                          break;
-    case ForBocMsg      : handleGroupMsgOnChildPostCompletionForRecvBcast(env);
-                          break;
-    case ForNodeBocMsg  : handleNGMsgOnChildPostCompletionForRecvBcast(env);
-                          break;
-    default             : CmiAbort("Type of message currently not supported\n");
-                          break;
+    case ArrayBcastFwdMsg : handleArrayMsgOnChildPostCompletionForRecvBcast(env, ncpyEmInfo);
+                            break;
+    case ForBocMsg        : handleGroupMsgOnChildPostCompletionForRecvBcast(env, ncpyEmInfo);
+                            break;
+    case ForNodeBocMsg    : handleNGMsgOnChildPostCompletionForRecvBcast(env, ncpyEmInfo);
+                            break;
+    default               : CmiAbort("Type of message currently not supported\n");
+                            break;
   }
 }
 
@@ -1489,11 +1714,6 @@ void handleMsgOnInterimPostCompletionForRecvBcast(envelope *env, NcpyBcastInteri
 
   CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_MSG;
 
-  if(env->getMsgtype() == ForArrayEltMsg) {
-    CkArray *mgr = getArrayMgrFromMsg(env);
-    env->setMsgtype(ForBocMsg);
-    env->getsetArrayEp() = mgr->getRecvBroadcastEpIdx();
-  }
 
   // Send message to children for them to Rget from me
   forwardMessageToChildNodes(env, env->getMsgtype());
@@ -1504,7 +1724,13 @@ void handleMsgOnInterimPostCompletionForRecvBcast(envelope *env, NcpyBcastInteri
 
 extern int _roRdmaDoneHandlerIdx,_initHandlerIdx;
 CksvExtern(int, _numPendingRORdmaTransfers);
-extern UInt numZerocopyROops, curROIndex;
+#if CMK_SMP
+extern std::atomic<UInt> numZerocopyROops;
+#else
+extern UInt  numZerocopyROops;
+#endif
+extern UInt curROIndex;
+extern bool usedCMAForROBcastTransfer;
 extern NcpyROBcastAckInfo *roBcastAckInfo;
 
 void readonlyUpdateNumops() {
@@ -1529,12 +1755,12 @@ void readonlyAllocateOnSource() {
 
 // Method to initialize the allocated object with each source buffer's information
 void readonlyCreateOnSource(CkNcpyBuffer &src) {
-  src.bcastAckInfo = roBcastAckInfo;
+  src.refAckInfo = roBcastAckInfo;
 
   NcpyROBcastBuffAckInfo *buffAckInfo = &(roBcastAckInfo->buffAckInfo[curROIndex]);
 
   buffAckInfo->ptr = src.ptr;
-  buffAckInfo->mode = src.mode;
+  buffAckInfo->regMode = src.regMode;
   buffAckInfo->pe = src.pe;
 
   // store the source layer information for de-registration
@@ -1566,6 +1792,8 @@ void readonlyGet(CkNcpyBuffer &src, CkNcpyBuffer &dest, void *refPtr) {
     // Initialize previously allocated structure for ack tracking on intermediate nodes
     if(t.child_count != 0)  // Intermediate Node
       readonlyCreateOnSource(dest);
+    else // Child Node - deregister dest buffer
+      deregisterBuffer(dest);
 
     // When all pending RO Rdma transfers are complete
     if(CksvAccess(_numPendingRORdmaTransfers) == 0) {
@@ -1578,60 +1806,30 @@ void readonlyGet(CkNcpyBuffer &src, CkNcpyBuffer &dest, void *refPtr) {
 
       } else { // Child Node
 
-        // deregister dest buffer
-        CmiDeregisterMem(dest.ptr, dest.layerInfo + CmiGetRdmaCommonInfoSize(), dest.pe, dest.mode);
-
         // Send a message to the parent to signal completion in order to deregister
+        QdCreate(1);
         envelope *compEnv = _allocEnv(ROChildCompletionMsg);
         compEnv->setSrcPe(CkMyPe());
         CmiSetHandler(compEnv, _roRdmaDoneHandlerIdx);
         CmiSyncSendAndFree(src.pe, compEnv->getTotalsize(), (char *)compEnv);
       }
 
-      // Directly call checkInitDone to notify RO Rdma completion
-      checkForInitDone(true);
+      // mark this variable as true in order to invoke checkForInitDone later
+      usedCMAForROBcastTransfer = true;
     }
   }
 #endif
   else {
-
-
-    int layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
-    int ackSize = 0;
-    int ncpyObjSize = getNcpyOpInfoTotalSize(
-                      layerInfoSize,
-                      ackSize,
-                      layerInfoSize,
-                      ackSize);
-    NcpyOperationInfo *ncpyOpInfo = (NcpyOperationInfo *)CmiAlloc(ncpyObjSize);
-    setNcpyOpInfo(src.ptr,
-                  (char *)(src.layerInfo),
-                  layerInfoSize,
-                  NULL,
-                  ackSize,
-                  src.cnt,
-                  src.mode,
-                  src.isRegistered,
-                  src.pe,
-                  src.ref,
-                  dest.ptr,
-                  (char *)(dest.layerInfo),
-                  layerInfoSize,
-                  NULL,
-                  ackSize,
-                  dest.cnt,
-                  dest.mode,
-                  dest.isRegistered,
-                  dest.pe,
-                  dest.ref,
-                  ncpyOpInfo);
-
-    ncpyOpInfo->opMode = CMK_READONLY_BCAST;
-    ncpyOpInfo->refPtr = refPtr;
-
     // Initialize previously allocated structure for ack tracking on intermediate nodes
     if(t.child_count != 0)
       readonlyCreateOnSource(dest);
+
+    int ackSize = 0;
+    int rootNode = 0;// Root Node is always 0 for Readonly bcast (the spanning tree is rooted at Node 0)
+
+    NcpyOperationInfo *ncpyOpInfo = dest.createNcpyOpInfo(src, dest, ackSize, NULL, NULL, rootNode, CMK_READONLY_BCAST, refPtr);
+
+    zcQdIncrement();
 
     CmiIssueRget(ncpyOpInfo);
   }
@@ -1648,6 +1846,9 @@ void readonlyGetCompleted(NcpyOperationInfo *ncpyOpInfo) {
   // Lock not needed for SMP mode as no other thread decrements _numPendingRORdmaTransfers
   CksvAccess(_numPendingRORdmaTransfers)--;
 
+  if(t.child_count == 0) // deregister dest buffer on the child node
+    deregisterDestBuffer(ncpyOpInfo);
+
   // When all pending RO Rdma transfers are complete
   if(CksvAccess(_numPendingRORdmaTransfers) == 0) {
 
@@ -1658,14 +1859,10 @@ void readonlyGetCompleted(NcpyOperationInfo *ncpyOpInfo) {
       // Send a message to my child nodes
       CmiForwardProcBcastMsg(env->getTotalsize(), (char *)env);
 
-      //TODO:QD support
-
     } else {
 
-      // deregister dest buffer
-      CmiDeregisterMem(ncpyOpInfo->destPtr, ncpyOpInfo->destLayerInfo + CmiGetRdmaCommonInfoSize(), ncpyOpInfo->destPe, ncpyOpInfo->destMode);
-
       // Send a message to the parent to signal completion in order to deregister
+      QdCreate(1);
       envelope *compEnv = _allocEnv(ROChildCompletionMsg);
       compEnv->setSrcPe(CkMyPe());
       CmiSetHandler(compEnv, _roRdmaDoneHandlerIdx);
@@ -1674,6 +1871,7 @@ void readonlyGetCompleted(NcpyOperationInfo *ncpyOpInfo) {
 
 #if CMK_SMP
     // Send a message to my first node to signal completion
+    QdCreate(1);
     envelope *sigEnv = _allocEnv(ROPeerCompletionMsg);
     sigEnv->setSrcPe(CkMyPe());
     CmiSetHandler(sigEnv, _roRdmaDoneHandlerIdx);
@@ -1686,7 +1884,685 @@ void readonlyGetCompleted(NcpyOperationInfo *ncpyOpInfo) {
   }
 
   // Free ncpyOpInfo allocated inside readonlyGet
-  CmiFree(ncpyOpInfo);
+  if(ncpyOpInfo->freeMe == CMK_FREE_NCPYOPINFO)
+    CmiFree(ncpyOpInfo);
+}
+/***************************** End of Zerocopy Readonly Bcast Support ****************************/
+
+inline void invokeCmaDirectRemoteDeregAckHandler(CkNcpyBuffer &buffInfo, ncpyHandlerIdx opMode) {
+  PUP::sizer implSizer;
+  implSizer|buffInfo;
+
+  ncpyHandlerMsg *msg = (ncpyHandlerMsg *)CmiAlloc(sizeof(ncpyHandlerMsg) + implSizer.size());
+
+  PUP::toMem implP((void *)((char *)msg + sizeof(ncpyHandlerMsg)));
+  implP|buffInfo;
+
+  msg->opMode = opMode;
+  CmiSetHandler(msg, ncpy_handler_idx);
+  QdCreate(1); // Matching QdProcess in _ncpyAckHandler
+  CmiSyncSendAndFree(buffInfo.pe, sizeof(ncpyHandlerMsg) + implSizer.size(), (char *)msg);
+}
+
+void invokeNcpyBcastNoHandler(int serializerPe, ncpyBcastNoMsg *bcastNoMsg, int msgSize) {
+  CmiSetHandler(bcastNoMsg, ncpy_bcastNo_handler_idx);
+  CmiBecomeImmediate(bcastNoMsg);
+  CmiSyncNodeSendAndFree(CmiNodeOf(serializerPe), msgSize, (char *)bcastNoMsg);
+}
+
+inline void _ncpyBcastNoHandler(ncpyBcastNoMsg *bcastNoMsg) {
+
+  CProxy_CkArray arrProxy;
+  PUP::fromMem implP((char *)bcastNoMsg + sizeof(ncpyBcastNoMsg));
+  implP|arrProxy;
+
+  CkArray *arr = (CkArray *)CkLocalBranchOther(arrProxy.ckGetGroupID(), 0);
+  CkArrayBroadcaster *bcaster = arr->getBroadcaster();
+
+  // increment bcastNo and send back a message to broadcast from the non-zero root
+  bcaster->incBcastNo();
+
+  MsgPointerWrapper w;
+  w.msg = bcastNoMsg->ref;
+
+  arrProxy[bcastNoMsg->srcPe].sendZCBroadcast(w);
+}
+
+
+// Register converse handler for invoking ncpy ack
+void initEMNcpyAckHandler(void) {
+  ncpy_bcastNo_handler_idx = CmiRegisterHandler((CmiHandler)_ncpyBcastNoHandler);
+  ncpy_handler_idx = CmiRegisterHandler((CmiHandler)_ncpyAckHandler);
+#if CMK_SMP
+  zcpy_pup_complete_handler_idx = CmiRegisterHandler((CmiHandler)_zcpyPupCompleteHandler);
+#endif
+}
+
+inline void invokeRemoteNcpyAckHandler(int pe, void *ref, ncpyHandlerIdx opMode) {
+  ncpyHandlerMsg *msg = (ncpyHandlerMsg *)CmiAlloc(sizeof(ncpyHandlerMsg));
+  msg->ref = ref;
+  msg->opMode = opMode;
+
+  CmiSetHandler(msg, ncpy_handler_idx);
+  QdCreate(1); // Matching QdProcess in _ncpyAckHandler
+  CmiSyncSendAndFree(pe, sizeof(ncpyHandlerMsg), (char *)msg);
+}
+
+inline void _ncpyAckHandler(ncpyHandlerMsg *msg) {
+  QdProcess(1);
+
+  switch(msg->opMode) {
+    case ncpyHandlerIdx::EM_ACK                : CkRdmaEMAckHandler(CmiMyPe(), msg->ref);
+                                                 break;
+    case ncpyHandlerIdx::BCAST_ACK             : CkRdmaEMBcastAckHandler(msg->ref);
+                                                 break;
+    case ncpyHandlerIdx::BCAST_POST_ACK        : CkRdmaEMBcastPostAckHandler(msg->ref);
+                                                 break;
+#if CMK_USE_CMA && CMK_REG_REQUIRED
+    case ncpyHandlerIdx::CMA_DEREG_ACK         : CkRdmaEMDeregAndAckHandler(msg->ref);
+                                                 break;
+    case ncpyHandlerIdx::CMA_DEREG_ACK_DIRECT  : CkRdmaEMDeregAndAckDirectHandler((char *)msg + sizeof(ncpyHandlerMsg));
+                                                 break;
+#endif
+    default                                    : CmiAbort("_ncpyAckHandler: Invalid OpMode\n");
+                                                 break;
+  }
+
+  CmiFree(msg); // Allocated in invokeRemoteNcpyAckHandler
+}
+
+
+/***************************** Zerocopy PUP Support ****************************/
+
+#if CMK_SMP
+// Executed on the worker thread to enqueue all buffered messages after Rgets complete
+void _zcpyPupCompleteHandler(zcPupPendingRgetsMsg *msg) {
+  CProxy_CkLocMgr(msg->locMgrId).ckLocalBranch()->processAfterActiveRgetsCompleted(msg->id);
+  CmiFree(msg);
 }
 #endif
-/* End of CMK_ONESIDED_IMPL */
+
+// Executed on the comm. thread in SMP mode
+void zcPupGetCompleted(NcpyOperationInfo *info) {
+  if(info->ackMode == CMK_SRC_DEST_ACK || info->ackMode == CMK_DEST_ACK) {
+    zcPupPendingRgetsMsg *ref = (zcPupPendingRgetsMsg *)(info->destRef);
+
+    auto iter = CksvAccess(pendingZCOps).find(ref->id);
+    if(iter != CksvAccess(pendingZCOps).end()) { // Entry found in pendingZCOps
+
+      CmiLock(CksvAccess(_nodeZCPendingLock));
+      int counter = --iter->second;
+      CmiUnlock(CksvAccess(_nodeZCPendingLock));
+
+      if(counter == 0) { // All Rgets have completed
+
+        CmiLock(CksvAccess(_nodeZCPendingLock));
+        // remove this entry from the map
+        CksvAccess(pendingZCOps).erase(iter);
+        CmiUnlock(CksvAccess(_nodeZCPendingLock));
+
+#if CMK_SMP
+        // Send a message to all PEs on this node to handle all buffered messages
+        CmiSetHandler(ref, zcpy_pup_complete_handler_idx);
+        CmiSyncSend(ref->pe,
+                    sizeof(zcPupPendingRgetsMsg),
+                    (char *)ref);
+#else
+        // On worker thread, handle all buffered messages
+        CProxy_CkLocMgr(ref->locMgrId).ckLocalBranch()->processAfterActiveRgetsCompleted(ref->id);
+#endif
+        CmiFree(ref);
+      }
+    } else {
+      CmiAbort("zcPupGetCompleted: object not found\n");
+    }
+    if(info->ackMode == CMK_SRC_DEST_ACK) {
+      invokeZCPupHandler((void *)info->srcRef, info->srcPe);
+
+#if CMK_REG_REQUIRED
+      // De-register destination buffer
+      deregisterDestBuffer(info);
+#endif
+    }
+  } else {
+    zcPupDone((void *)info->srcRef);
+  }
+  if(info->freeMe == CMK_FREE_NCPYOPINFO)
+    CmiFree(info);
+}
+
+// Issue Rgets for ZC Pup using NcpyOperationInfo stored in newZCPupGets
+void zcPupIssueRgets(CmiUInt8 id, CkLocMgr *locMgr) {
+
+  // Allocate a zcPupPendingRgetsMsg that is used for ack handling
+  zcPupPendingRgetsMsg *ref = (zcPupPendingRgetsMsg *)CmiAlloc(sizeof(zcPupPendingRgetsMsg));
+  ref->id = id;
+  ref->numops = CpvAccess(newZCPupGets).size();
+  ref->locMgrId = locMgr->getGroupID();
+#if CMK_SMP
+  ref->pe = CmiMyPe();
+#endif
+
+  for(std::vector<NcpyOperationInfo *>::iterator it = CpvAccess(newZCPupGets).begin();
+        it != CpvAccess(newZCPupGets).end(); ++it) {
+    (*it)->destRef = (char *)ref;
+    zcQdIncrement();
+    CmiIssueRget(*it); // Issue the Rget
+  }
+
+  // Create an entry for the unordered map with idx as the index and the vector size as the value
+  CmiLock(CksvAccess(_nodeZCPendingLock));
+  CksvAccess(pendingZCOps).emplace(id, (CmiUInt1)CpvAccess(newZCPupGets).size());
+  CmiUnlock(CksvAccess(_nodeZCPendingLock));
+
+  // Create an entry for the unordered map with idx as the index and vector of messages as the value
+  locMgr->bufferedActiveRgetMsgs.emplace(id, std::vector<CkArrayMessage *>()); // does not require locking as it is owned by locMgr
+}
+/***************************** End of Zerocopy PUP Support ****************************/
+
+
+/**************************** Zerocopy Post API Async Support **************************/
+
+// PE-level Post method
+void CkPostBufferInternal(void *destBuffer, size_t destSize, int tag) {
+
+  // check if tag exists in posted req table
+  auto iter = CkpvAccess(ncpyPostedReqMap).find(tag);
+
+  if(iter == CkpvAccess(ncpyPostedReqMap).end()) {
+
+    auto iter2 = CkpvAccess(ncpyPostedBufferMap).find(tag);
+
+    if(iter2 == CkpvAccess(ncpyPostedBufferMap).end()) { // not found, insert into ncpyPostedBufferMap
+      CkPostedBuffer postedBuff;
+      postedBuff.buffer = destBuffer;
+      postedBuff.bufferSize = destSize;
+      CkpvAccess(ncpyPostedBufferMap).emplace(tag, postedBuff);
+    } else {
+      CkAbort("CkPostBufferInternal: tag %d already exists, use another tag!\n", tag);
+    }
+
+  } else { // found, perform rget
+
+    CkNcpyBufferPost post = iter->second;
+    if(CkPerformRget(post, destBuffer, destSize))  {
+      CkpvAccess(ncpyPostedReqMap).erase(iter);
+    }
+
+  }
+}
+
+// Node-level Post method
+void CkPostNodeBufferInternal(void *destBuffer, size_t destSize, int tag) {
+
+  // check if tag exists in posted req node table
+  auto iter = CksvAccess(ncpyPostedReqNodeMap).find(tag);
+
+  if(iter == CksvAccess(ncpyPostedReqNodeMap).end()) {
+
+    auto iter2 = CksvAccess(ncpyPostedBufferNodeMap).find(tag);
+
+    if(iter2 == CksvAccess(ncpyPostedBufferNodeMap).end()) { // not found, insert into ncpyPostedBufferNodeMap
+      CkPostedBuffer postedBuff;
+      postedBuff.buffer = destBuffer;
+      postedBuff.bufferSize = destSize;
+
+      CmiLock(CksvAccess(_nodeZCBufferReqLock));
+      CksvAccess(ncpyPostedBufferNodeMap).emplace(tag, postedBuff);
+      CmiUnlock(CksvAccess(_nodeZCBufferReqLock));
+    } else {
+      CkAbort("CkPostNodeBufferInternal: tag %d already exists, use another tag!\n", tag);
+    }
+
+  } else { // found, perform rget
+
+    CkNcpyBufferPost post = iter->second;
+
+    if(CkPerformRget(post, destBuffer, destSize)) {
+      CmiLock(CksvAccess(_nodeZCPostReqLock));
+      CksvAccess(ncpyPostedReqNodeMap).erase(iter);
+      CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+    }
+  }
+}
+
+// PE-level Match method
+void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag) {
+
+  post[index].postAsync = true;
+
+  // check if tag exists in posted buffer table
+  auto iter = CkpvAccess(ncpyPostedBufferMap).find(tag);
+
+  if(iter == CkpvAccess(ncpyPostedBufferMap).end()) {
+
+    auto iter2 = CkpvAccess(ncpyPostedReqMap).find(tag);
+
+    if(iter2 == CkpvAccess(ncpyPostedReqMap).end()) { // not found, insert into ncpyPostedReqMap
+      post[index].tag = tag;
+      CkpvAccess(ncpyPostedReqMap).emplace(post[index].tag, post[index]);
+    } else {
+      CkAbort("CkMatchBuffer: tag %d already exists, use another tag!\n", tag);
+    }
+
+  } else { // found, perform rget
+
+    CkPostedBuffer *buff = &(iter->second);
+    post[index].tag = tag;
+
+    if(CkPerformRget((post[index]), buff->buffer, buff->bufferSize)) {
+      CkpvAccess(ncpyPostedBufferMap).erase(iter);
+    }
+  }
+}
+
+// Node-level Match method
+void CkMatchNodeBuffer(CkNcpyBufferPost *post, int index, int tag) {
+
+  post[index].postAsync = true;
+
+  // check if tag exists posted buffer node table
+  auto iter = CksvAccess(ncpyPostedBufferNodeMap).find(tag);
+
+  if(iter == CksvAccess(ncpyPostedBufferNodeMap).end()) {
+
+    auto iter2 = CksvAccess(ncpyPostedReqNodeMap).find(tag);
+
+    if(iter2 == CksvAccess(ncpyPostedReqNodeMap).end()) { // not found, insert into ncpyPostedReqNodeMap
+      post[index].tag = tag;
+      CmiLock(CksvAccess(_nodeZCPostReqLock));
+      CksvAccess(ncpyPostedReqNodeMap).emplace(post[index].tag, post[index]);
+      CmiUnlock(CksvAccess(_nodeZCPostReqLock));
+    } else {
+      CkAbort("CkMatchNodeBuffer: tag %d already exists, use another tag!\n", tag);
+    }
+
+  } else { // found, perform rget
+
+    CkPostedBuffer *buff = &(iter->second);
+    post[index].tag = tag;
+
+    if(CkPerformRget((post[index]), buff->buffer, buff->bufferSize)) {
+      CmiLock(CksvAccess(_nodeZCBufferReqLock));
+      CksvAccess(ncpyPostedBufferNodeMap).erase(iter);
+      CmiUnlock(CksvAccess(_nodeZCBufferReqLock));
+    }
+  }
+}
+
+void initPostStruct(CkNcpyBufferPost *ncpyPost, int index) {
+  CkNcpyBufferPost &ncpyPostElem = ncpyPost[index];
+  ncpyPostElem.regMode = CK_BUFFER_REG;
+  ncpyPostElem.deregMode = CK_BUFFER_DEREG;
+  ncpyPostElem.index = index;
+  ncpyPostElem.postAsync = false;
+}
+
+void setPostStruct(CkNcpyBufferPost *ncpyPost, int index, CkNcpyBuffer &buffObj, CmiUInt8 elemIndex) {
+  CkNcpyBufferPost &ncpyPostElem = ncpyPost[index];
+  ncpyPostElem.srcBuffer = (void *)buffObj.ptr;
+  ncpyPostElem.srcSize = buffObj.cnt;
+  ncpyPostElem.ncpyEmInfo->tagArray = buffObj.ncpyEmInfo->tagArray;
+  ncpyPostElem.opIndex = index;
+  ncpyPostElem.arrayIndex = elemIndex;
+}
+
+void updateTagArray(envelope *env, int localElems) {
+  int numops = 0;
+  int bufsize = 0;
+  int rootNode;
+  PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
+  up|numops;
+  up|rootNode;
+  for(int i=0; i<numops; i++){
+    CkNcpyBuffer w;
+    up|w;
+    w.ncpyEmInfo->tagArray[CmiMyRank()].resize(static_cast<size_t>(localElems) * numops);
+    std::fill(w.ncpyEmInfo->tagArray[CmiMyRank()].begin(), w.ncpyEmInfo->tagArray[CmiMyRank()].end(), -1);
+    w.ncpyEmInfo->peerAckInfo->incNumElems(localElems);
+    w.ncpyEmInfo->peerAckInfo->decNumPeers();
+    break;
+  }
+}
+
+void updatePeerCounter(NcpyEmInfo *ncpyEmInfo) {
+  NcpyBcastRecvPeerAckInfo *peerAckInfo = ncpyEmInfo->peerAckInfo;
+  if(peerAckInfo->decNumElems() - 1 == 0 && peerAckInfo->getNumPeers() == 0) {
+    envelope *env = (envelope *)peerAckInfo->msg;
+    CMI_ZC_MSGTYPE(env) = CMK_ZC_BCAST_RECV_ALL_DONE_MSG;
+    if(env->getMsgtype() == ArrayBcastFwdMsg) {
+      QdCreate(1);
+      enqueueNcpyMessage(peerAckInfo->peerParentPe, env);
+    } else if(env->getMsgtype() == ForBocMsg) {
+      CmiPushPE(CmiRankOf(peerAckInfo->peerParentPe), env);
+    }
+    freeNcpyEmInfo(ncpyEmInfo);
+  }
+}
+
+void setPosted(std::vector<int> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops, int opIndex) {
+  int localIndex = -1;
+  if(env->getMsgtype() == ArrayBcastFwdMsg) {
+    CkArray *mgr = getArrayMgrFromMsg(env);
+    int arraySize = mgr->getNumLocalElems();
+    localIndex = mgr->getEltLocalIndex(elemIndex);
+    tagArray[CmiMyRank()][localIndex * numops + opIndex] = 0;
+  } else {
+    localIndex = CmiMyRank();
+    tagArray[CmiMyRank()][opIndex] = 0;
+  }
+}
+
+bool isUnposted(std::vector<int> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops) {
+  int opIndex = 0;
+  int localIndex = -1;
+  if(env->getMsgtype() == ArrayBcastFwdMsg) {
+    CkArray *mgr = getArrayMgrFromMsg(env);
+    int arraySize = mgr->getNumLocalElems();
+    localIndex = mgr->getEltLocalIndex(elemIndex);
+    return (tagArray[CmiMyRank()][localIndex * numops + opIndex] == -1);
+  } else {
+    localIndex = CmiMyRank();
+    return (tagArray[CmiMyRank()][opIndex] == -1);
+  }
+}
+
+void *extractStoredBuffer(std::vector<int> *tagArray, envelope *env, CmiUInt8 elemIndex, int numops, int opIndex) {
+  int tag = 0;
+  int localIndex = -1;
+  void *ptr = nullptr;
+
+  // Retrieve tag
+  if(env->getMsgtype() == ArrayBcastFwdMsg) {
+    CkArray *mgr = getArrayMgrFromMsg(env);
+    int arraySize = mgr->getNumLocalElems();
+    localIndex = mgr->getEltLocalIndex(elemIndex);
+    tag = tagArray[CmiMyRank()][localIndex * numops + opIndex];
+
+  } else if(env->getMsgtype() == ForBocMsg) {
+
+    localIndex = CmiMyRank();
+    tag = tagArray[CmiMyRank()][opIndex];
+  }
+
+  // Find buffer pointer using tag
+  auto iter = CkpvAccess(ncpyPostedReqMap).find(tag);
+
+  if(iter == CkpvAccess(ncpyPostedReqMap).end()) { // Entry not found in ncpyPostedReqMap
+    auto iter2 = CkpvAccess(ncpyPostedBufferMap).find(tag);
+
+    if(iter2 == CkpvAccess(ncpyPostedBufferMap).end()) {
+      CkAbort("extractStoredBuffer: Tag:%d not found on Pe:%d\n", tag, CmiMyPe());
+    } else {
+      CkPostedBuffer buff = (iter2->second);
+      ptr = buff.buffer; // set ptr
+      CkpvAccess(ncpyPostedBufferMap).erase(iter2);
+    }
+  } else {
+    CkNcpyBufferPost *post = &(iter->second);
+    ptr = post->srcBuffer; // set ptr
+    CkpvAccess(ncpyPostedReqMap).erase(iter);
+  }
+  return ptr;
+}
+
+// Preprocess method executed for primary element (that performs the zcpy operation)
+void CkRdmaAsyncPostPreprocess(envelope *env, int numops, CkNcpyBufferPost *post) {
+
+  int refSize = 0;
+  NcpyEmInfo *ncpyEmInfo = nullptr;
+  int layerInfoSize, ncpyObjSize, extraSize;
+
+  ncpyEmApiMode emMode = (CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_MSG) ? ncpyEmApiMode::BCAST_RECV : ncpyEmApiMode::P2P_RECV;
+
+  CkNcpyMode ncpyMode = findTransferMode(getSrcPe(env), CkMyPe());
+
+  layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
+
+  if(ncpyMode == CkNcpyMode::RDMA) {
+    preprocessRdmaCaseForRgets(layerInfoSize, ncpyObjSize, extraSize, refSize, numops);
+    ncpyEmInfo = (NcpyEmInfo *)CmiAlloc(refSize);
+    setNcpyEmInfo(ncpyEmInfo, env, numops, NULL, emMode);
+
+  } else {
+    ncpyEmInfo = (NcpyEmInfo *)CmiAlloc(sizeof(NcpyEmInfo));
+    refSize = sizeof(NcpyEmInfo);
+    setNcpyEmInfo(ncpyEmInfo, env, numops, NULL, emMode);
+  }
+
+  std::vector<int> *tagArray = NULL;
+  NcpyBcastRecvPeerAckInfo *peerAckInfo = NULL;
+
+  if(emMode == ncpyEmApiMode::BCAST_RECV) {
+    if(env->getMsgtype() == ArrayBcastFwdMsg) {
+      CkArray *mgr = getArrayMgrFromMsg(env);
+      int numElems = mgr->getNumLocalElems();
+
+      tagArray = new std::vector<int>[CmiMyNodeSize()];
+      tagArray[CmiMyRank()].resize(static_cast<size_t>(numElems) * numops);
+      std::fill(tagArray[CmiMyRank()].begin(), tagArray[CmiMyRank()].end(), -1);
+
+      peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      peerAckInfo->init(numElems - 1, CmiMyNodeSize() - 1, env, CmiMyPe());
+    }
+#if CMK_SMP
+    else if(env->getMsgtype() == ForBocMsg) {
+
+      int numElems = CmiMyNodeSize();
+
+      tagArray = new std::vector<int>[CmiMyNodeSize()];
+      for(int i=0; i < CmiMyNodeSize(); i++) {
+        tagArray[i].resize(numops);
+        std::fill(tagArray[i].begin(), tagArray[i].end(), -1);
+      }
+
+      peerAckInfo = new NcpyBcastRecvPeerAckInfo();
+      peerAckInfo->init(numElems - 1, 0, env, CmiMyPe());
+    }
+#endif
+  }
+
+  ncpyEmInfo->tagArray = tagArray;
+  ncpyEmInfo->peerAckInfo = peerAckInfo;
+
+  for(int i=0; i<numops; i++) {
+    post[i].ncpyEmInfo = ncpyEmInfo;
+  }
+}
+
+// Preprocess method executed for the secondary element
+void CkRdmaAsyncPostPreprocess(envelope *env, int numops, CkNcpyBufferPost *post, CmiUInt8 arrayIndex, void *peerAckInfo) {
+
+  ncpyEmApiMode emMode = (CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_MSG) ? ncpyEmApiMode::BCAST_RECV : ncpyEmApiMode::P2P_RECV;
+
+  NcpyEmInfo *ncpyEmInfo = (NcpyEmInfo *)CmiAlloc(sizeof(NcpyEmInfo));
+  setNcpyEmInfo(ncpyEmInfo, env, numops, NULL, emMode);
+
+  for(int i=0; i<numops; i++) {
+    post[i].ncpyEmInfo = ncpyEmInfo;
+  }
+}
+
+int CkPerformRget(CkNcpyBufferPost &post, void *destBuffer, int destSize) {
+
+  envelope *env = (envelope *)post.ncpyEmInfo->msg;
+  int numops = post.ncpyEmInfo->numOps;
+  ncpyEmApiMode emMode = post.ncpyEmInfo->mode;
+
+  if(CMI_IS_ZC_RECV(env)) {
+    int destIndex = post.index;
+    int refSize = 0;
+    NcpyEmInfo *ncpyEmInfo;
+    int layerInfoSize, ncpyObjSize, extraSize;
+    int rootNode;
+
+    layerInfoSize = CMK_COMMON_NOCOPY_DIRECT_BYTES + CMK_NOCOPY_DIRECT_BYTES;
+
+    CkNcpyMode ncpyMode = findTransferMode(getSrcPe(env), CkMyPe());
+
+    CmiSpanningTreeInfo *t = NULL;
+    ncpyEmInfo = post.ncpyEmInfo;
+
+    PUP::toMem p((void *)(((CkMarshallMsg *)EnvToUsr(env))->msgBuf));
+    PUP::fromMem up((void *)((CkMarshallMsg *)EnvToUsr(env))->msgBuf);
+    up|numops;
+    up|rootNode;
+    p|numops;
+    p|rootNode;
+
+    if(emMode == ncpyEmApiMode::BCAST_RECV) {
+      if(_topoTree == NULL) CkAbort("CkPostBufferInternal: topo tree has not been calculated \n");
+      t = getSpanningTreeInfo(rootNode);
+    }
+
+    if(ncpyMode == CkNcpyMode::RDMA) {
+      preprocessRdmaCaseForRgets(layerInfoSize, ncpyObjSize, extraSize, refSize, numops);
+    }
+
+    // source buffer
+    CkNcpyBuffer source;
+
+    bool sendBackToSourceForDereg = false;
+    for(int i=0; i<numops; i++){
+      up|source;
+
+      if(i == destIndex) {
+
+        if(source.cnt < destSize)
+          CkAbort("CkRdmaIssueRgets: Size of the posted buffer > Size of the source buffer\n");
+
+#if CMK_USE_CMA && CMK_REG_REQUIRED
+        if(!sendBackToSourceForDereg && ncpyMode == CkNcpyMode::CMA && source.refAckInfo != NULL)
+          sendBackToSourceForDereg = true;
+#endif
+
+        // destination buffer
+        CkNcpyBuffer dest((const void *)destBuffer, destSize, post.regMode, post.deregMode);
+
+        performEmApiNcpyTransfer(source, dest, i, t, ncpyEmInfo, extraSize, ncpyMode, rootNode, emMode);
+
+        //Update the CkRdmaWrapper pointer of the new message
+        source.ptr = destBuffer;
+
+        source.isRegistered = dest.isRegistered;
+
+        source.regMode = dest.regMode;
+
+        source.deregMode = dest.deregMode;
+
+        source.ncpyEmInfo = post.ncpyEmInfo;
+
+        memcpy(source.layerInfo, dest.layerInfo, layerInfoSize);
+      }
+      p|source;
+    }
+
+    bool allOpsComplete = false;
+
+    // check for completion
+    if(ncpyMode != CkNcpyMode::RDMA) { //operation is complete
+
+      if(numops == 1) // complete
+        allOpsComplete = true;
+
+      else { // update counter
+        ncpyEmInfo->counter++;
+        if(ncpyEmInfo->counter == ncpyEmInfo->numOps) {
+          allOpsComplete = true;
+        }
+      }
+    } else {
+      performRget(ncpyEmInfo, destIndex, extraSize);
+    }
+
+    if(!allOpsComplete) // wait for all ops to be complete
+      return true;
+
+    if(emMode == ncpyEmApiMode::P2P_RECV) {
+
+      CMI_ZC_MSGTYPE(env) = CMK_REG_NO_ZC_MSG;
+      CmiFree(ncpyEmInfo);
+
+      switch(ncpyMode) {
+        case CkNcpyMode::MEMCPY:  QdCreate(1);
+                                  enqueueNcpyMessage(CkMyPe(), env);
+                                  break;
+        case CkNcpyMode::CMA   :  if(sendBackToSourceForDereg) {
+                                    // Send back to source process to de-register
+                                    invokeRemoteNcpyAckHandler(source.pe, (void *)source.refAckInfo, ncpyHandlerIdx::CMA_DEREG_ACK);
+                                  }
+                                  QdCreate(1);
+                                  enqueueNcpyMessage(CkMyPe(), env);
+                                  break;
+
+        default                :  CmiAbort("Invalid transfer mode\n");
+                                  break;
+      }
+    } else if(emMode == ncpyEmApiMode::BCAST_RECV) {
+
+      switch(ncpyMode) {
+        case CkNcpyMode::MEMCPY:  // Invoke the bcast Ack Handler after 'numops' memcpy operations are complete
+                                  CkAssert(source.refAckInfo != NULL);
+                                  CkRdmaEMBcastAckHandler((void *)source.refAckInfo);
+                                  handleMsgOnChildPostCompletionForRecvBcast(env, ncpyEmInfo);
+                                  break;
+
+        case CkNcpyMode::CMA   :  // Invoke the Ack handler on the parent node to signal completion
+                                  sendAckMsgToParent(env);
+                                  if(t->child_count == 0) {
+                                    handleMsgOnChildPostCompletionForRecvBcast(env, ncpyEmInfo);
+                                  } else {
+                                    // Allocate a structure NcpyBcastInterimAckInfo to maintain state for ack handling
+                                    NcpyBcastInterimAckInfo *bcastAckInfo = allocateInterimNodeAckObj(env, NULL, CkMyPe());
+                                    bcastAckInfo->ncpyEmInfo = ncpyEmInfo;
+                                    handleMsgOnInterimPostCompletionForRecvBcast(env, bcastAckInfo, CkMyPe());
+                                  }
+                                  break;
+
+        default                :  CmiAbort("Invalid transfer mode\n");
+                                  break;
+      }
+    } else {
+      CmiAbort("Invalid operation mode\n");
+    }
+    return true;
+
+  } else if(CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_DONE_MSG) {
+
+    memcpy(destBuffer, post.srcBuffer, post.srcSize);
+
+    post.srcBuffer = destBuffer;
+    post.srcSize = destSize;
+
+    post.ncpyEmInfo->counter++;
+
+    if(env->getMsgtype() == ArrayBcastFwdMsg) {
+
+      CkArray *mgr = getArrayMgrFromMsg(env);
+      CkMigratable *elem = mgr->getEltFromArrMgr(post.arrayIndex);
+      int localIndex = mgr->getEltLocalIndex(post.arrayIndex);
+      (post.ncpyEmInfo->tagArray)[CmiMyRank()][localIndex * numops + post.opIndex] = post.tag;
+
+      if(post.ncpyEmInfo->counter == numops) {
+        mgr->forwardZCMsgToSpecificElem(env, elem);
+        CmiFree(post.ncpyEmInfo);
+      }
+
+    } else if(env->getMsgtype() == ForBocMsg) {
+      int localIndex = CmiMyRank();
+      (post.ncpyEmInfo->tagArray)[CmiMyRank()][post.opIndex] = post.tag;
+
+      if(post.ncpyEmInfo->counter == numops) {
+        CmiHandleMessage(env);
+        CmiFree(post.ncpyEmInfo);
+      }
+    }
+    return false;
+
+  } else {
+
+    CkAbort("CkPerformRget: Incorrect message type\n");
+    return false;
+  }
+}
+/************************* End of Zerocopy Post API Async Support **********************/

@@ -1,23 +1,27 @@
+-include ../include/conv-mach-opt.mak
+
+# Temporary hack that needs to be removed / replaced
+OPTS += $(OPTSATBUILDTIME)
+
 DIRS = \
   charm++ \
   converse \
   ampi \
-  armci \
-  bigsim \
   collide \
 
-BGDIRS = \
+TESTDIRS = $(DIRS)
+
+TESTPDIRS = \
   charm++ \
   ampi \
-  armci \
-
-TESTDIRS = $(DIRS)
 
 all: $(foreach i,$(DIRS),build-$i)
 
 test: $(foreach i,$(TESTDIRS),test-$i)
 
-bgtest: $(foreach i,$(filter $(BGDIRS),$(TESTDIRS)),bgtest-$i)
+testp: $(foreach i,$(TESTPDIRS),testp-$i)
+
+syncfttest mpisyncfttest:
 
 clean: $(foreach i,$(DIRS),clean-$i)
 	rm -f TAGS #*#
@@ -29,8 +33,11 @@ $(foreach i,$(DIRS),build-$i):
 $(foreach i,$(DIRS),test-$i):
 	$(MAKE) -C $(subst test-,,$@) test OPTS='$(OPTS)' TESTOPTS='$(TESTOPTS)'
 
-$(foreach i,$(DIRS),bgtest-$i):
-	$(MAKE) -C $(subst bgtest-,,$@) bgtest OPTS='$(OPTS)' TESTOPTS='$(TESTOPTS)'
+$(foreach i,$(DIRS),testp-$i):
+	$(MAKE) -C $(subst testp-,,$@) testp OPTS='$(OPTS)' TESTOPTS='$(TESTOPTS)' P='$(P)'
 
 $(foreach i,$(DIRS),clean-$i):
 	$(MAKE) -C $(subst clean-,,$@) clean OPTS='$(OPTS)'
+
+test-AMPI: test-ampi
+test-charm: test-charm++

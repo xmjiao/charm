@@ -3,6 +3,11 @@
 #include <math.h>
 
 #include "converse.h"
+#include "charm-api.h"
+
+#if CMK_ERROR_CHECKING
+CpvDeclare(double, idleBeginWalltime); // used for determining the conditon for long idle
+#endif
 
 #include <vector>
 #include <deque>
@@ -105,12 +110,8 @@ static void call_cblist_remove(ccd_cblist & l, double curWallTime)
   const size_t len = l.elems.size();
 
   // we must iterate this way because insertion invalidates deque iterators
-#if ! CMK_BIGSIM_CHARM
-  for (size_t i = 0; i < len; ++i)
-#else
   // i < len is correct. after i==0, unsigned underflow will wrap to SIZE_MAX
   for (size_t i = len-1; i < len; --i)
-#endif
   {
     const ccd_callback & cb = l.elems[i];
     int old = CmiSwitchToPE(cb.pe);
@@ -227,7 +228,7 @@ static void ccd_heap_update(double curWallTime)
 
 
 
-void CcdCallBacksReset(void *ignored,double curWallTime);
+CLINKAGE void CcdCallBacksReset(void *ignored,double curWallTime);
 
 /**
  * Initialize the callback containers
@@ -250,6 +251,10 @@ void CcdModuleInit(char **ignored)
    CpvAccess(pcb).resolution = CCD_DEFAULT_RESOLUTION;
    CcdCallOnConditionKeep(CcdPROCESSOR_BEGIN_IDLE,CcdCallBacksReset,0);
    CcdCallOnConditionKeep(CcdPROCESSOR_END_IDLE,CcdCallBacksReset,0);
+
+#if CMK_ERROR_CHECKING
+   CpvInitialize(double, idleBeginWalltime); //used for LONG_IDLE
+#endif
 }
 
 
@@ -340,12 +345,13 @@ void CcdCallFnAfter(CcdVoidFn fnp, void *arg, double deltaT)
  * Raise a condition causing all registered callbacks corresponding to 
  * that condition to be triggered
  */
-void CcdRaiseCondition(int condnum)
+double CcdRaiseCondition(int condnum)
 {
   CmiAssert(condnum < MAXNUMCONDS);
   double curWallTime=CmiWallTimer();
   call_cblist_remove(CpvAccess(conds).condcb[condnum], curWallTime);
   call_cblist_keep(CpvAccess(conds).condcb_keep[condnum], curWallTime);
+  return curWallTime;
 }
 
 

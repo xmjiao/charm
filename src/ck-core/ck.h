@@ -28,15 +28,20 @@ inline void _CldEnqueue(int pe, void *msg, int infofn) {
     CmiFree(msg);
     return;
   }
-#if CMK_ONESIDED_IMPL
   envelope *env = (envelope *)msg;
   // Store source information to handle acknowledgements on completion
-  if(CMI_IS_ZC_BCAST(msg))
-    CkRdmaPrepareBcastMsg(env);
-#endif
+  if(CMI_IS_ZC(msg))
+    CkRdmaPrepareZCMsg(env, CkNodeOf(pe));
   CldEnqueue(pe, msg, infofn);
 }
-inline void _CldEnqueueMulti(int npes, int *pes, void *msg, int infofn) {
+inline void _CldEnqueueWithinNode(void *msg, int infofn) {
+  if (!ConverseDeliver(-1)) {
+    CmiFree(msg);
+    return;
+  }
+  CldEnqueueWithinNode(msg, infofn);
+}
+inline void _CldEnqueueMulti(int npes, const int *pes, void *msg, int infofn) {
   if (!ConverseDeliver(-1)) {
     CmiFree(msg);
     return;
@@ -55,37 +60,32 @@ inline void _CldNodeEnqueue(int node, void *msg, int infofn) {
     CmiFree(msg);
     return;
   }
-#if CMK_ONESIDED_IMPL
   envelope *env = (envelope *)msg;
   // Store source information to handle acknowledgements on completion
-  if(CMI_IS_ZC_BCAST(msg))
-    CkRdmaPrepareBcastMsg(env);
-#endif
+  if(CMI_IS_ZC(msg))
+    CkRdmaPrepareZCMsg(env, node);
   CldNodeEnqueue(node, msg, infofn);
 }
 #else
 
 inline void _CldEnqueue(int pe, void *msg, int infofn) {
-#if CMK_ONESIDED_IMPL
   envelope *env = (envelope *)msg;
   // Store source information to handle acknowledgements on completion
-  if(CMI_IS_ZC_BCAST(msg))
-    CkRdmaPrepareBcastMsg(env);
-#endif
+  if(CMI_IS_ZC(msg))
+    CkRdmaPrepareZCMsg(env, CkNodeOf(pe));
   CldEnqueue(pe, msg, infofn);
 }
 
 inline void _CldNodeEnqueue(int node, void *msg, int infofn) {
-#if CMK_ONESIDED_IMPL
   envelope *env = (envelope *)msg;
   // Store source information to handle acknowledgements on completion
-  if(CMI_IS_ZC_BCAST(msg))
-    CkRdmaPrepareBcastMsg(env);
-#endif
+  if(CMI_IS_ZC(msg))
+    CkRdmaPrepareZCMsg(env, node);
   CldNodeEnqueue(node, msg, infofn);
 }
-#define _CldEnqueueMulti  CldEnqueueMulti
-#define _CldEnqueueGroup  CldEnqueueGroup
+#define _CldEnqueueMulti      CldEnqueueMulti
+#define _CldEnqueueGroup      CldEnqueueGroup
+#define _CldEnqueueWithinNode CldEnqueueWithinNode
 #endif
 
 #ifndef CMK_CHARE_USE_PTR
@@ -235,6 +235,10 @@ public:
 };
 
 CkpvExtern(CkCoreState *, _coreState);
+
+#if CMK_LBDB_ON
+CkLocRec *CkActiveLocRec(void);
+#endif // CMK_LBDB_ON
 
 void CpdHandleLBMessage(LBMigrateMsg **msg);
 void CkMessageWatcherInit(char **argv,CkCoreState *ck);

@@ -11,24 +11,10 @@
 
 void BaseLB::initLB(const CkLBOptions &opt) {
   seqno = opt.getSeqNo();
-  CkpvAccess(numLoadBalancers) ++;
-/*
-  if (CkpvAccess(numLoadBalancers) - CkpvAccess(hasNullLB) > 1)
-    CmiAbort("Error: try to create more than one load balancer strategies!");
-*/
-  theLbdb = CProxy_LBDatabase(_lbdb).ckLocalBranch();
+  lbmgr = CProxy_LBManager(_lbmgr).ckLocalBranch();
   lbname = "Unknown";
-  // register this load balancer to LBDatabase at the sequence number
-  theLbdb->addLoadbalancer(this, seqno);
-}
-
-BaseLB::~BaseLB() {
-  CkpvAccess(numLoadBalancers) --;
-}
-
-void BaseLB::unregister() {
-  theLbdb->RemoveLocalBarrierReceiver(receiver);
-  CkpvAccess(numLoadBalancers) --;
+  // register this load balancer to LBManager at the sequence number
+  lbmgr->addLoadbalancer(this, seqno);
 }
 
 void BaseLB::pup(PUP::er &p) { 
@@ -37,7 +23,7 @@ void BaseLB::pup(PUP::er &p) {
   {
     if (CkMyPe()==0) {
       if (seqno!=-1) {
-        int newseq = LBDatabaseObj()->getLoadbalancerTicket();
+        int newseq = LBManagerObj()->getLoadbalancerTicket();
         CmiAssert(newseq == seqno);
       }
     }
@@ -47,16 +33,28 @@ void BaseLB::pup(PUP::er &p) {
 
 void BaseLB::flushStates() {
   Group::flushStates();
-  theLbdb->ClearLoads();
+  lbmgr->ClearLoads();
 }
 
 #else
-BaseLB::~BaseLB() {} 
 void BaseLB::initLB(const CkLBOptions &) {}
-void BaseLB::unregister() {}
 void BaseLB::pup(PUP::er &p) {}
 void BaseLB::flushStates() {}
 #endif
+
+void BaseLB::turnOn()
+{
+#if CMK_LBDB_ON
+  lbmgr->TurnOnStartLBFn(startLbFnHdl);
+#endif
+}
+
+void BaseLB::turnOff()
+{
+#if CMK_LBDB_ON
+  lbmgr->TurnOffStartLBFn(startLbFnHdl);
+#endif
+}
 
 static inline int i_abs(int c) { return c>0?c:-c; }
 
@@ -66,13 +64,11 @@ inline static int ObjKey(const CmiUInt8 &oid, const int hashSize) {
   return oid % hashSize;
 }
 
-BaseLB::LDStats::LDStats(int c, int complete)
-	: n_objs(0), n_migrateobjs(0), n_comm(0), 
-          objHash(NULL), complete_flag(complete)
+BaseLB::LDStats::LDStats(int npes, int complete)
+	: n_migrateobjs(0),
+          complete_flag(complete)
 {
-  count = c;
-  if (count == 0) count = CkNumPes();
-  procs = new ProcStats[count];
+  procs.resize(npes);
 }
 
 const static unsigned int doublingPrimes[] = {
@@ -148,30 +144,25 @@ static unsigned int primeLargerThan(unsigned int x)
 
 void BaseLB::LDStats::makeCommHash() {
   // hash table is already build
-  if (objHash) return;
+  if (!objHash.empty()) return;
    
-  int i;
-  hashSize = n_objs*2;
-  hashSize = primeLargerThan(hashSize);
-  objHash = new int[hashSize];
-  for(i=0;i<hashSize;i++)
-        objHash[i] = -1;
-   
-  for(i=0;i<n_objs;i++){
-        const CmiUInt8 &oid = objData[i].objID();
+  hashSize = primeLargerThan(objData.size() * 2);
+  objHash.assign(hashSize, -1);
+  int i = 0;
+  for(const auto& obj : objData) {
+        const CmiUInt8 &oid = obj.objID();
         int hash = ObjKey(oid, hashSize);
 	CmiAssert(hash != -1);
         while(objHash[hash] != -1)
             hash = (hash+1)%hashSize;
-        objHash[hash] = i;
+        objHash[hash] = i++;
   }
 }
 
 void BaseLB::LDStats::deleteCommHash() {
-  if (objHash) delete [] objHash;
-  objHash = NULL;
-  for(int i=0; i < n_comm; i++) {
-      commData[i].clearHash();
+  objHash.clear();
+  for(auto& comm : commData) {
+      comm.clearHash();
   }
 }
 
@@ -185,7 +176,7 @@ int BaseLB::LDStats::getHash(const CmiUInt8 &oid, const LDOMid &mid)
         int index = (id+hash)%hashSize;
 	if (index == -1 || objHash[index] == -1) return -1;
         if (objData[objHash[index]].objID() == oid &&
-            LDOMidEqual(objData[objHash[index]].omID(), mid))
+            objData[objHash[index]].omID() == mid)
             return objHash[index];
     }
     //  CkPrintf("not found \n");
@@ -217,8 +208,8 @@ int BaseLB::LDStats::getRecvHash(LDCommData &cData)
 }
 
 void BaseLB::LDStats::clearCommHash() {
-  for(int i=0; i < n_comm; i++) {
-      commData[i].clearHash();
+  for(auto& comm : commData) {
+      comm.clearHash();
   }
 }
 
@@ -231,8 +222,7 @@ void BaseLB::LDStats::computeNonlocalComm(int &nmsgs, int &nbytes)
 	makeCommHash();
 
 	int mcast_count = 0;
-        for (int cidx=0; cidx < n_comm; cidx++) {
-	    LDCommData& cdata = commData[cidx];
+        for (auto& cdata : commData) {
 	    int senderPE, receiverPE;
 	    if (cdata.from_proc())
 	      senderPE = cdata.src_proc;
@@ -242,7 +232,7 @@ void BaseLB::LDStats::computeNonlocalComm(int &nmsgs, int &nbytes)
 	      senderPE = to_proc[idx];
 	      CmiAssert(senderPE != -1);
 	    }
-	    CmiAssert(senderPE < nprocs() && senderPE >= 0);
+	    CmiAssert(senderPE < procs.size() && senderPE >= 0);
 
             // find receiver: point-to-point and multicast two cases
 	    int receiver_type = cdata.receiver.get_type();
@@ -257,7 +247,7 @@ void BaseLB::LDStats::computeNonlocalComm(int &nmsgs, int &nbytes)
 		}
 		else {
 	          receiverPE = to_proc[idx];
-                  CmiAssert(receiverPE < nprocs() && receiverPE >= 0);
+                  CmiAssert(receiverPE < procs.size() && receiverPE >= 0);
 		}
               }
 	      if(senderPE != receiverPE)
@@ -268,18 +258,18 @@ void BaseLB::LDStats::computeNonlocalComm(int &nmsgs, int &nbytes)
 	    }
             else if (receiver_type == LD_OBJLIST_MSG) {
               int nobjs;
-              LDObjKey *objs = cdata.receiver.get_destObjs(nobjs);
+              const LDObjKey *objs = cdata.receiver.get_destObjs(nobjs);
 	      mcast_count ++;
-	      CkVec<int> pes;
+	      std::vector<int> pes;
 	      for (int i=0; i<nobjs; i++) {
 	        int idx = getHash(objs[i]);
 		CmiAssert(idx != -1);
 	        if (idx == -1) continue;    // receiver has just been removed?
 	        receiverPE = to_proc[idx];
-		CmiAssert(receiverPE < nprocs() && receiverPE >= 0);
+		CmiAssert(receiverPE < procs.size() && receiverPE >= 0);
 		int exist = 0;
-	        for (int p=0; p<pes.size(); p++) 
-		  if (receiverPE == pes[p]) { exist=1; break; }
+	        for (auto pe : pes)
+		  if (receiverPE == pe) { exist=1; break; }
 		if (exist) continue;
 		pes.push_back(receiverPE);
 	        if(senderPE != receiverPE)
@@ -294,26 +284,24 @@ void BaseLB::LDStats::computeNonlocalComm(int &nmsgs, int &nbytes)
 }
 
 void BaseLB::LDStats::normalize_speed() {
-  int pe;
   double maxspeed = 0.0;
 
-  for(int pe=0; pe < nprocs(); pe++) {
-    if (procs[pe].pe_speed > maxspeed) maxspeed = procs[pe].pe_speed;
+  for (const auto& proc : procs)
+  {
+    if (proc.pe_speed > maxspeed) maxspeed = proc.pe_speed;
   }
-  for(int pe=0; pe < nprocs(); pe++)
-    procs[pe].pe_speed /= maxspeed;
+  for (auto& proc : procs) proc.pe_speed /= maxspeed;
 }
 
 void BaseLB::LDStats::print()
 {
 #if CMK_LBDB_ON
   int i;
-  CkPrintf("------------- Processor Data: %d -------------\n", nprocs());
-  for(int pe=0; pe < nprocs(); pe++) {
-    struct ProcStats &proc = procs[pe];
-
-    CkPrintf("Proc %d (%d) Speed %d Total = %f Idle = %f Bg = %f nObjs = %d",
-      pe, proc.pe, proc.pe_speed, proc.total_walltime, proc.idletime,
+  CkPrintf("------------- Processor Data: %zu -------------\n", procs.size());
+  for (const auto& proc : procs)
+  {
+    CkPrintf("Proc %d (%d) Speed %f Total = %f Idle = %f Bg = %f nObjs = %d",
+      i++, proc.pe, proc.pe_speed, proc.total_walltime, proc.idletime,
       proc.bg_walltime, proc.n_objs);
 #if CMK_LB_CPUTIMER
     CkPrintf(" CPU Total %f Bg %f", proc.total_cputime, proc.bg_cputime);
@@ -321,12 +309,12 @@ void BaseLB::LDStats::print()
     CkPrintf("\n");
   }
 
-  CkPrintf("------------- Object Data: %d objects -------------\n", n_objs);
-  for(i=0; i < n_objs; i++) {
-      LDObjData &odata = objData[i];
-      CkPrintf("Object %d\n",i);
+  i = 0;
+  CkPrintf("------------- Object Data: %zu objects -------------\n", objData.size());
+  for(auto &odata : objData) {
+      CkPrintf("Object %d\n",i++);
       CkPrintf("     id = %" PRIu64 "\n",odata.objID());
-      CkPrintf("  OM id = %d\t",odata.omID().id);
+      CkPrintf("  OM id = %d\t",odata.omID().id.idx);
       CkPrintf("   Mig. = %d\n",odata.migratable);
 #if CMK_LB_CPUTIMER
       CkPrintf("    CPU = %f\t",odata.cpuTime);
@@ -334,46 +322,47 @@ void BaseLB::LDStats::print()
       CkPrintf("   Wall = %f\n",odata.wallTime);
   }
 
-  CkPrintf("------------- Comm Data: %d records -------------\n", n_comm);
-  CkVec<LDCommData> &cdata = commData;
-  for(i=0; i < n_comm; i++) {
-      CkPrintf("Link %d\n",i);
+  i = 0;
+  CkPrintf("------------- Comm Data: %zu records -------------\n", commData.size());
+  for(const auto& comm : commData) {
+      CkPrintf("Link %d\n",i++);
 
-      CmiUInt8 &sid = cdata[i].sender.objID();
-      if (cdata[i].from_proc())
-	CkPrintf("    sender PE = %d\t",cdata[i].src_proc);
+      if (comm.from_proc())
+	CkPrintf("    sender PE = %d\t",comm.src_proc);
       else
 	CkPrintf("    sender id = %d:[%" PRIu64 "]\t",
-		 cdata[i].sender.omID().id,sid);
+		 comm.sender.omID().id.idx,comm.sender.objID());
 
-      CmiUInt8 &rid = cdata[i].receiver.get_destObj().objID();
-      if (cdata[i].recv_type() == LD_PROC_MSG)
-	CkPrintf("  receiver PE = %d\n",cdata[i].receiver.proc());
+      if (comm.recv_type() == LD_PROC_MSG)
+	CkPrintf("  receiver PE = %d\n",comm.receiver.proc());
       else	
 	CkPrintf("  receiver id = %d:[%" PRIu64 "]\n",
-		 cdata[i].receiver.get_destObj().omID().id,rid);
+		 comm.receiver.get_destObj().omID().id.idx,comm.receiver.get_destObj().objID());
       
-      CkPrintf("     messages = %d\t",cdata[i].messages);
-      CkPrintf("        bytes = %d\n",cdata[i].bytes);
+      CkPrintf("     messages = %d\t",comm.messages);
+      CkPrintf("        bytes = %d\n",comm.bytes);
   }
   CkPrintf("------------- Object to PE mapping -------------\n");
-  for (i=0; i<n_objs; i++) CkPrintf(" %d", from_proc[i]);
+  for (const auto& val : from_proc) CkPrintf(" %d", val);
   CkPrintf("\n");
 #endif
 }
 
 double BaseLB::LDStats::computeAverageLoad()
 {
-  int i, numAvail=0;
+  int numAvail = 0;
   double total = 0;
-  for (i=0; i<n_objs; i++) total += objData[i].wallTime;
-                                                                                
-  for (i=0; i<nprocs(); i++)
-    if (procs[i].available == true) {
-        total += procs[i].bg_walltime;
-	numAvail++;
+  for (const auto& obj : objData) total += obj.wallTime;
+
+  for (const auto& proc : procs)
+  {
+    if (proc.available)
+    {
+      total += proc.bg_walltime;
+      numAvail++;
     }
-                                                                                
+  }
+
   double averageLoad = total/numAvail;
   return averageLoad;
 }
@@ -388,70 +377,56 @@ void BaseLB::LDStats::removeObject(int obj)
   okey.omID() = odata.omID();
   okey.objID() = odata.objID();
 
-  objData.remove(obj);
-  from_proc.remove(obj);
-  to_proc.remove(obj);
-  n_objs --;
+  objData.erase(objData.begin() + obj);
+  from_proc.erase(from_proc.begin() + obj);
+  to_proc.erase(to_proc.begin() + obj);
   if (odata.migratable) n_migrateobjs --;
 
   // search for sender, can be multiple sender
-  int removed = 0;
-  for (int com=0; com<n_comm; com++) {
-    LDCommData &cdata = commData[com-removed];
-    if(!cdata.from_proc() && cdata.sender == okey) {
-      commData.remove(com-removed);
-      removed++;
-    }
-  }
-  n_comm -= removed;
+  commData.erase(remove_if(commData.begin(),
+                           commData.end(),
+                           [&](LDCommData& cdata) {
+                             return !cdata.from_proc() && cdata.sender == okey;
+                           }),
+                 commData.end());
 }
 
 void BaseLB::LDStats::pup(PUP::er &p)
 {
-  int i;
-  p(count);
-  p(n_objs);
   p(n_migrateobjs);
-  p(n_comm);
-  if (p.isUnpacking()) {
-    // user can specify simulated processors other than the real # of procs.
-    int maxpe = nprocs() > LBSimulation::simProcs ? nprocs() : LBSimulation::simProcs;
-    procs = new ProcStats[maxpe];
-    objData.resize(n_objs);
-    commData.resize(n_comm);
-    from_proc.resize(n_objs);
-    to_proc.resize(n_objs);
-    objHash = NULL;
+  p|procs;
+  if (p.isUnpacking())
+  {
+    // user can specify simulated processors other than the real # of procs
+    if (LBSimulation::simProcs > procs.size())
+    {
+      procs.resize(LBSimulation::simProcs);
+    }
+    // ignore the background load when unpacking if the user changed the # of procs
+    if (LBSimulation::procsChanged)
+    {
+      const auto size = procs.size();
+      procs.clear();
+      procs.resize(size);
+    }
   }
-  // ignore the background load when unpacking if the user change the # of procs
-  // otherwise load everything
-  if (p.isUnpacking() && LBSimulation::procsChanged) {
-    ProcStats dummy;
-    for (i=0; i<nprocs(); i++) p|dummy;
-  }
-  else
-    for (i=0; i<nprocs(); i++) p|procs[i];
-  for (i=0; i<n_objs; i++) p|objData[i]; 
-  for (i=0; i<n_objs; i++) p|from_proc[i]; 
-  for (i=0; i<n_objs; i++) p|to_proc[i]; 
+  p|objData;
+  p|from_proc;
   // reset to_proc when unpacking
   if (p.isUnpacking())
-    for (i=0; i<n_objs; i++) to_proc[i] = from_proc[i];
-  for (i=0; i<n_comm; i++) p|commData[i];
-  if (p.isUnpacking())
-    count = LBSimulation::simProcs;
+    to_proc = from_proc;
+  p|commData;
   if (p.isUnpacking()) {
-    objHash = NULL;
-    if (_lb_args.lbversion() <= 1) 
-      for (i=0; i<nprocs(); i++) procs[i].pe = i;
+    if (_lb_args.lbversion() <= 1)
+      for (int i = 0; i < procs.size(); i++) procs[i].pe = i;
   }
 }
 
 int BaseLB::LDStats::useMem() { 
   // calculate the memory usage of this LB (superclass).
-  return sizeof(LDStats) + sizeof(ProcStats) * nprocs() +
-	 (sizeof(LDObjData) + 2 * sizeof(int)) * n_objs +
- 	 sizeof(LDCommData) * n_comm;
+  return sizeof(LDStats) + sizeof(ProcStats) * procs.size() +
+	 (sizeof(LDObjData) + 2 * sizeof(int)) * objData.size() +
+	 sizeof(LDCommData) * commData.size();
 }
 
 #include "BaseLB.def.h"

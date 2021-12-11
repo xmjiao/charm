@@ -6,6 +6,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <ctime>        // std::time_t, std::gmtime
+#include <chrono>       // std::chrono::system_clock
+
 #include "charm.h"
 #include "middle.h"
 #include "cklists.h"
@@ -15,6 +18,36 @@
 #include "trace-common.h"
 #include "allEvents.h"          //projector
 #include "register.h" // for _entryTable
+
+#include "envelope.h"
+
+// To get username
+#if defined(_WIN32) || defined(_WIN64)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <Lmcons.h>
+#else
+#include <pwd.h>
+#endif
+
+// To get hostname
+#if defined(_WIN32) || defined(_WIN64)
+#  include <Winsock2.h>
+#else
+#  include <unistd.h>
+#  include <limits.h> // For HOST_NAME_MAX
+#endif
+
+#ifndef HOST_NAME_MAX
+// Apple seems to not adhere to POSIX and defines this non-standard variable
+// instead of HOST_NAME_MAX
+#  ifdef MAXHOSTNAMELEN
+#    define HOST_NAME_MAX MAXHOSTNAMELEN
+// Windows docs say 256 bytes (so 255 + 1 added at use) will always be sufficient
+#  else
+#    define HOST_NAME_MAX 255
+#  endif
+#endif
 
 CpvExtern(int, _traceCoreOn);   // projector
 
@@ -28,11 +61,6 @@ static int warned = 0;
 #define DEBUGF(x)          // CmiPrintf x
 
 CkpvDeclare(TraceArray*, _traces);		// lists of all trace modules
-
-/* trace for bluegene */
-class TraceBluegene;
-CkpvDeclare(TraceBluegene*, _tracebg);
-int traceBluegeneLinked=0;			// if trace-bluegene is linked
 
 CkpvDeclare(bool,   dumpData);
 CkpvDeclare(double, traceInitTime);
@@ -63,11 +91,7 @@ int _sdagMsg, _sdagChare, _sdagEP;
 CtvDeclare(int, curThreadEvent);
 CpvDeclare(int, curPeEvent);
 
-#if CMK_BIGSIM_CHARM
-double TraceTimerCommon(){return TRACE_TIMER();}
-#else
 double TraceTimerCommon(){return TRACE_TIMER() - CkpvAccess(traceInitTime);}
-#endif
 #if CMK_TRACE_ENABLED
 void CthSetEventInfo(CthThread t, int event, int srcPE);
 #endif
@@ -210,11 +234,7 @@ static void traceCommonInit(char **argv)
 
   
   
-#ifdef __BIGSIM__
-  if(BgNodeRank()==0) {
-#else
   if(CkMyRank()==0) {
-#endif
     _threadMsg = CkRegisterMsg("dummy_thread_msg", 0, 0, 0, 0);
     _threadChare = CkRegisterChare("dummy_thread_chare", 0, TypeInvalid);
     CkRegisterChareInCharm(_threadChare);
@@ -237,17 +257,64 @@ static void traceCommonInit(char **argv)
   }
 }
 
+extern char** Cmi_argvcopy;
+extern const char* const CmiCommitID;
+
 /** Write out the common parts of the .sts file. */
 void traceWriteSTS(FILE *stsfp,int nUserEvents) {
   fprintf(stsfp, "MACHINE \"%s\"\n",CMK_MACHINE_NAME);
-#if CMK_SMP_TRACE_COMMTHREAD
+#if CMK_SMP_TRACE_COMMTHREAD && CMK_SMP && !CMK_SMP_NO_COMMTHD
   //Assuming there's only 1 comm thread now! --Chao Mei
   //considering the extra comm thread per node
-  fprintf(stsfp, "PROCESSORS %d\n", CkNumPes()+CkNumNodes());  
-  fprintf(stsfp, "SMPMODE %d %d\n", CkMyNodeSize(), CkNumNodes());
-#else	
+  fprintf(stsfp, "PROCESSORS %d\n", CkNumPes()+CkNumNodes());
+#else
   fprintf(stsfp, "PROCESSORS %d\n", CkNumPes());
-#endif	
+#endif
+#if CMK_SMP
+  fprintf(stsfp, "SMPMODE %d %d\n", CkMyNodeSize(), CkNumNodes());
+#endif
+
+#if defined(_WIN32) || defined(_WIN64)
+  TCHAR username[UNLEN + 1];
+  DWORD size = UNLEN + 1;
+  if (GetUserName(username, &size))
+    fprintf(stsfp, "USERNAME \"%s\"\n", username);
+#else
+  const struct passwd* pw = getpwuid(getuid());
+  if (pw != nullptr)
+    fprintf(stsfp, "USERNAME \"%s\"\n", pw->pw_name);
+#endif
+
+  // Add 1 for null terminator
+  char hostname[HOST_NAME_MAX + 1];
+  if(gethostname(hostname, HOST_NAME_MAX + 1) == 0)
+    fprintf(stsfp, "HOSTNAME \"%s\"\n", hostname);
+
+  fprintf(stsfp, "COMMANDLINE \"");
+  int index = 0;
+  while (Cmi_argvcopy[index] != nullptr)
+  {
+    if (index > 0)
+      fprintf(stsfp, " ");
+    fprintf(stsfp, "%s", Cmi_argvcopy[index]);
+    index++;
+  }
+  fprintf(stsfp, "\"\n");
+
+  // write timestamp in ISO 8601 format
+  using std::chrono::system_clock;
+  const time_t now = system_clock::to_time_t(system_clock::now());
+  struct tm currentTime;
+#if defined(_WIN32) || defined(_WIN64)
+  gmtime_s(&currentTime, &now);
+#else
+  gmtime_r(&now, &currentTime);
+#endif
+  char timeBuffer[sizeof("YYYY-mm-ddTHH:MM:SSZ")];
+  strftime(timeBuffer, sizeof(timeBuffer), "%FT%TZ", &currentTime);
+  fprintf(stsfp, "TIMESTAMP %s\n", timeBuffer);
+
+  fprintf(stsfp, "CHARMVERSION %s\n", CmiCommitID);
   fprintf(stsfp, "TOTAL_CHARES %d\n", (int)_chareTable.size());
   fprintf(stsfp, "TOTAL_EPS %d\n", (int)_entryTable.size());
   fprintf(stsfp, "TOTAL_MSGS %d\n", (int)_msgTable.size());
@@ -400,11 +467,6 @@ static int checkTraceOnPe(char **argv)
 {
   int traceOnPE = 1;
   char *procs = NULL;
-#if CMK_BIGSIM_CHARM
-  // check bgconfig file for settings
-  traceOnPE=0;
-  if (BgTraceProjectionOn(CkMyPe())) traceOnPE = 1;
-#endif
   if (CmiGetArgStringDesc(argv, "+traceprocessors", &procs, "A list of processors to trace, e.g. 0,10,20-30"))
   {
     CkListString procList(procs);
@@ -453,7 +515,7 @@ static inline void _traceInit(char **argv)
   // check if trace is turned on/off for this pe
   CkpvAccess(traceOnPe) = checkTraceOnPe(argv);
 
-#if !CMK_CHARMPY
+#if !CMK_CHARM4PY
   // defined in moduleInit.C
   _createTraces(argv);
 #endif
@@ -531,10 +593,6 @@ void traceEndIdle()
 }
 
 // CMK_TRACE_ENABLED is already guarded in convcore.C
-// converse thread tracing is not supported in blue gene simulator
-// in BigSim, threads need to be traced manually (because virtual processors
-// themselves are implemented as threads and we don't want them to be traced
-// In BigSim, so far, only AMPI threads are traced.
 void traceResume(int eventID, int srcPE, CmiObjId *tid)
 {
     _TRACE_BEGIN_EXECUTE_DETAILED(eventID, ForChareMsg, _threadEP, srcPE, 0, NULL, tid);
@@ -780,18 +838,12 @@ void traceFlushLog(void)
 */
 void traceClose(void)
 {
-#if ! CMK_BIGSIM_CHARM
   OPTIMIZE_WARNING
   CkpvAccess(_traces)->traceClose();
-#endif   
 }
 
 void traceCharmClose(void)
 {
-#if CMK_BIGSIM_CHARM
-  OPTIMIZE_WARNING
-  CkpvAccess(_traces)->traceClose();
-#endif
 }
 
 /* **CW** This is the API called from user code to support CCS operations 
@@ -803,12 +855,61 @@ void traceEnableCCS(void)
   CkpvAccess(_traces)->traceEnableCCS();  
 }
 
-/* **CW** Support for thread listeners. This makes a call to each
-   trace module which must support the call.
-*/
-void traceAddThreadListeners(CthThread tid, envelope *e) {
-  _TRACE_ONLY(CkpvAccess(_traces)->traceAddThreadListeners(tid, e));
+struct TraceThreadListener {
+  struct CthThreadListener base;
+  int event;
+  int msgType;
+  int ep;
+  int srcPe;
+  int ml;
+  CmiObjId idx;
+};
+
+static void traceThreadListener_suspend(struct CthThreadListener *l)
+{
+  TraceThreadListener *a=(TraceThreadListener *)l;
+  /* here, we activate the appropriate trace codes for the appropriate
+     registered modules */
+  traceSuspend();
 }
+
+static void traceThreadListener_resume(struct CthThreadListener *l)
+{
+  TraceThreadListener *a=(TraceThreadListener *)l;
+  /* here, we activate the appropriate trace codes for the appropriate
+     registered modules */
+  _TRACE_BEGIN_EXECUTE_DETAILED(a->event,a->msgType,a->ep,a->srcPe,a->ml,
+				CthGetThreadID(a->base.thread), NULL);
+  a->event=-1;
+  a->srcPe=CkMyPe(); /* potential lie to migrated threads */
+  a->ml=0;
+}
+
+static void traceThreadListener_free(struct CthThreadListener *l)
+{
+  TraceThreadListener *a=(TraceThreadListener *)l;
+  delete a;
+}
+
+void traceAddThreadListeners(CthThread tid, envelope *e)
+{
+#if CMK_TRACE_ENABLED
+  /* strip essential information from the envelope */
+  TraceThreadListener *a= new TraceThreadListener;
+
+  a->base.suspend=traceThreadListener_suspend;
+  a->base.resume=traceThreadListener_resume;
+  a->base.free=traceThreadListener_free;
+  a->event=e->getEvent();
+  a->msgType=e->getMsgtype();
+  a->ep=e->getEpIdx();
+  a->srcPe=e->getSrcPe();
+  a->ml=e->getTotalsize();
+
+  CthAddListener(tid, (CthThreadListener *)a);
+#endif
+}
+
 
 #if 1
 // helper functions
@@ -849,7 +950,7 @@ void TraceArray::creation(envelope *env, int ep, int num)
 }
 
 void TraceArray::creationMulticast(envelope *env, int ep, int num,
-				   int *pelist)
+				   const int *pelist)
 {
   if (_entryTable[ep]->traceEnabled)
     ALLDO(creationMulticast(env, ep, num, pelist));
@@ -862,8 +963,8 @@ int traceBeginCommOp(char *msg){
     CkpvAccess(_traces)->beginExecute(msg);
     return 1;
   }
-  return 0;
 #endif
+  return 0;
 }
 
 void traceEndCommOp(char *msg){
@@ -918,11 +1019,8 @@ CkpvDeclare(int, papiEventSet);
 CkpvDeclare(LONG_LONG_PAPI*, papiValues);
 CkpvDeclare(int, papiStarted);
 CkpvDeclare(int, papiStopped);
-#ifdef USE_SPP_PAPI
-int papiEvents[NUMPAPIEVENTS];
-#else
-int papiEvents[NUMPAPIEVENTS] = { PAPI_L1_TCM, PAPI_L1_TCA, PAPI_L2_TCM, PAPI_L2_TCA};
-#endif
+CkpvDeclare(int*, papiEvents);
+CkpvDeclare(int, numEvents);
 #endif // CMK_HAS_COUNTER_PAPI
 
 #if CMK_HAS_COUNTER_PAPI
@@ -963,17 +1061,21 @@ void initPAPI() {
   if (PAPI_create_eventset(&CkpvAccess(papiEventSet)) != PAPI_OK) {
     CmiAbort("PAPI failed to create event set!\n");
   }
+  CkpvInitialize(int*, papiEvents);
+  CkpvInitialize(int, numEvents);
 #ifdef USE_SPP_PAPI
+  CkpvAccess(numEvents) = NUMPAPIEVENTS;
+  CkpvAccess(papiEvents) = new int[CkpvAccess(numEvents)];
   //  CmiPrintf("Using SPP counters for PAPI\n");
   if(PAPI_query_event(PAPI_FP_OPS)==PAPI_OK) {
-    papiEvents[0] = PAPI_FP_OPS;
+    CkpvAccess(papiEvents)[0] = PAPI_FP_OPS;
   }else{
     if(CmiMyPe()==0){
       CmiAbort("WARNING: PAPI_FP_OPS doesn't exist on this platform!");
     }
   }
   if(PAPI_query_event(PAPI_TOT_INS)==PAPI_OK) {
-    papiEvents[1] = PAPI_TOT_INS;
+    CkpvAccess(papiEvents)[1] = PAPI_TOT_INS;
   }else{
     CmiAbort("WARNING: PAPI_TOT_INS doesn't exist on this platform!");
   }
@@ -981,30 +1083,43 @@ void initPAPI() {
   int ret;
   ret=PAPI_event_name_to_code("perf::PERF_COUNT_HW_CACHE_LL:MISS",&EventCode);
   if(PAPI_query_event(EventCode)==PAPI_OK) {
-    papiEvents[2] = EventCode;
+    CkpvAccess(papiEvents)[2] = EventCode;
   }else{
     CmiAbort("WARNING: perf::PERF_COUNT_HW_CACHE_LL:MISS doesn't exist on this platform!");
   }
   ret=PAPI_event_name_to_code("DATA_PREFETCHER:ALL",&EventCode);
   if(PAPI_query_event(EventCode)==PAPI_OK) {
-    papiEvents[3] = EventCode;
+    CkpvAccess(papiEvents)[3] = EventCode;
   }else{
     CmiAbort("WARNING: DATA_PREFETCHER:ALL doesn't exist on this platform!");
   }
   if(PAPI_query_event(PAPI_L1_DCA)==PAPI_OK) {
-    papiEvents[4] = PAPI_L1_DCA;
+    CkpvAccess(papiEvents)[4] = PAPI_L1_DCA;
   }else{
     CmiAbort("WARNING: PAPI_L1_DCA doesn't exist on this platform!");
   }
   if(PAPI_query_event(PAPI_TOT_CYC)==PAPI_OK) {
-    papiEvents[5] = PAPI_TOT_CYC;
+    CkpvAccess(papiEvents)[5] = PAPI_TOT_CYC;
   }else{
     CmiAbort("WARNING: PAPI_TOT_CYC doesn't exist on this platform!");
   }
 #else
-  // just uses { PAPI_L2_DCM, PAPI_FP_OPS } the 2 initialized PAPI_EVENTS
+  CkpvAccess(numEvents) = NUMPAPIEVENTS;
+  CkpvAccess(papiEvents) = new int[CkpvAccess(numEvents)];
+  if (PAPI_query_event(PAPI_L1_TCM) == PAPI_OK && PAPI_query_event(PAPI_L1_TCA) == PAPI_OK) {
+    CkpvAccess(papiEvents)[0] = PAPI_L1_TCM;
+    CkpvAccess(papiEvents)[1] = PAPI_L1_TCA;
+  } else if (PAPI_query_event(PAPI_L2_TCM) == PAPI_OK && PAPI_query_event(PAPI_L2_TCA) == PAPI_OK) {
+    CkpvAccess(papiEvents)[0] = PAPI_L2_TCM;
+    CkpvAccess(papiEvents)[1] = PAPI_L2_TCA;
+  } else if (PAPI_query_event(PAPI_L3_TCM) == PAPI_OK && PAPI_query_event(PAPI_L3_TCA) == PAPI_OK) {
+    CkpvAccess(papiEvents)[0] = PAPI_L3_TCM;
+    CkpvAccess(papiEvents)[1] = PAPI_L3_TCA;
+  } else {
+    CmiAbort("PAPI: no cache miss/access events supported on any level!\n");
+  }
 #endif
-  papiRetValue = PAPI_add_events(CkpvAccess(papiEventSet), papiEvents, NUMPAPIEVENTS);
+  papiRetValue = PAPI_add_events(CkpvAccess(papiEventSet), CkpvAccess(papiEvents), CkpvAccess(numEvents));
   if (papiRetValue < 0) {
     if (papiRetValue == PAPI_ECNFLCT) {
       CmiAbort("PAPI events conflict! Please re-assign event types!\n");
@@ -1017,18 +1132,18 @@ void initPAPI() {
   }
   if(CkMyPe()==0)
     {
-      CmiPrintf("Registered %d PAPI counters:",NUMPAPIEVENTS);
+      CmiPrintf("Registered %d PAPI counters:",CkpvAccess(numEvents));
       char nameBuf[PAPI_MAX_STR_LEN];
-      for(int i=0;i<NUMPAPIEVENTS;i++)
+      for(int i=0;i<CkpvAccess(numEvents);i++)
 	{
-	  PAPI_event_code_to_name(papiEvents[i], nameBuf);
+	  PAPI_event_code_to_name(CkpvAccess(papiEvents)[i], nameBuf);
 	  CmiPrintf("%s ",nameBuf);
 	}
       CmiPrintf("\n");
     }
   CkpvInitialize(LONG_LONG_PAPI*, papiValues);
-  CkpvAccess(papiValues) = (LONG_LONG_PAPI*)malloc(NUMPAPIEVENTS*sizeof(LONG_LONG_PAPI));
-  memset(CkpvAccess(papiValues), 0, NUMPAPIEVENTS*sizeof(LONG_LONG_PAPI));
+  CkpvAccess(papiValues) = (LONG_LONG_PAPI*)malloc(CkpvAccess(numEvents)*sizeof(LONG_LONG_PAPI));
+  memset(CkpvAccess(papiValues), 0, CkpvAccess(numEvents)*sizeof(LONG_LONG_PAPI));
 #endif
 }
 #endif

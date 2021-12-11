@@ -12,28 +12,19 @@
 
 void CreateDistBaseLB();
 
-/// for backward compatibility
-typedef LBMigrateMsg NLBMigrateMsg;
-
-
 class DistBaseLB : public CBase_DistBaseLB {
 public:
   DistBaseLB(const CkLBOptions &);
   DistBaseLB(CkMigrateMessage *m) : CBase_DistBaseLB(m) {}
   ~DistBaseLB();
 
-  static void staticAtSync(void*);
-  void AtSync(void); // Everything is at the PE barrier
-
-  void barrierDone();
-	static void staticStartLB(void*);
-	void ProcessAtSync();
+  void InvokeLB(void);
+  void barrierDone(); // Everything is at the PE barrier
   void LoadBalance();
   void ResumeClients();
   void ResumeClients(int balancing);
   // Migrated-element callback
-  static void staticMigrated(void* me, LDObjHandle h, int waitBarrier);
-  void Migrated(LDObjHandle h, int waitBarrier);
+  void Migrated(int waitBarrier);
 
   struct LDStats {  // Passed to Strategy
     int from_pe;
@@ -50,10 +41,8 @@ public:
     bool available;
     bool move;
 
-    int n_objs;
-    LDObjData* objData;
-    int n_comm;
-    LDCommData* commData;
+    std::vector<LDObjData> objData;
+    std::vector<LDCommData> commData;
 
     inline void clearBgLoad() {
       bg_walltime = idletime = 0.0;
@@ -66,6 +55,7 @@ public:
 protected:
   virtual void Strategy(const LDStats* const myStats);
   void ProcessMigrationDecision(LBMigrateMsg* migrateMsg);
+  void MigrationDone(int balancing);  // Call when migration is complete
 
   LDStats myStats;
   int migrates_expected;
@@ -80,7 +70,6 @@ private:
   LBMigrateMsg** mig_msgs;
 
   void AssembleStats();
-  void MigrationDone(int balancing);  // Call when migration is complete
 };
 
 #endif /* _DISTBASELB_H */

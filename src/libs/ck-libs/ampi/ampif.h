@@ -136,7 +136,7 @@
        integer, parameter :: MPI_KEYVAL_INVALID = -1
        integer, parameter :: MPI_INFO_NULL      = -1
 
-       integer, pointer   :: MPI_IN_PLACE
+       integer, pointer   :: MPI_IN_PLACE => null()
 
        integer, parameter :: MPI_BOTTOM = 0
 
@@ -172,12 +172,12 @@
        integer, parameter :: AMPI_NUM_WTHS         = -14
        integer, parameter :: AMPI_MY_PROCESS       = -15
        integer, parameter :: AMPI_NUM_PROCESSES    = -16
+       integer, parameter :: AMPI_MY_HOME_WTH      = -17
 
        integer, parameter :: MPI_STATUS_SIZE = 8
 
        integer, parameter :: MPI_TAG         = 1
        integer, parameter :: MPI_SOURCE      = 2
-       integer, parameter :: MPI_COMM        = 3
        integer, parameter :: MPI_ERROR       = 5
 
        integer, dimension(MPI_STATUS_SIZE) :: MPI_STATUS_IGNORE
@@ -185,17 +185,8 @@
        integer, dimension(MPI_STATUS_SIZE) :: MPI_STATUSES_IGNORE
        parameter (MPI_STATUSES_IGNORE = (/-9,-9,-9,-9,-9,-9,-9,-9/))
 
-       integer, parameter :: MPI_COMM_SELF        = 1000000
-       integer, parameter :: MPI_COMM_FIRST_SPLIT = 1000000
-       integer, parameter :: MPI_COMM_FIRST_GROUP = 2000000
-       integer, parameter :: MPI_COMM_FIRST_CART  = 3000000
-       integer, parameter :: MPI_COMM_FIRST_GRAPH = 4000000
-       integer, parameter :: MPI_COMM_FIRST_INTER = 5000000
-       integer, parameter :: MPI_COMM_FIRST_INTRA = 6000000
-       integer, parameter :: MPI_COMM_FIRST_RESVD = 7000000
-       integer, parameter :: MPI_COMM_WORLD       = 9000000
-       integer, parameter :: MPI_MAX_COMM_WORLDS  = 8
-       integer :: MPI_COMM_UNIVERSE(1:MPI_MAX_COMM_WORLDS)
+       integer, parameter :: MPI_COMM_WORLD       = 1000000
+       integer, parameter :: MPI_COMM_SELF        = 1000001
 
        integer, parameter :: MPI_INFO_ENV              = 0
        integer, parameter :: AMPI_INFO_LB_SYNC         = 1
@@ -258,5 +249,13 @@
 
        integer, parameter :: MPI_MESSAGE_NULL = -1
        integer, parameter :: MPI_MESSAGE_NO_PROC = -2
+
+       ! necessary for ROMIO's tests
+       integer, parameter :: MPI_ORDER_C = 56
+       integer, parameter :: MPI_ORDER_FORTRAN = 57
+       integer, parameter :: MPI_DISTRIBUTE_BLOCK = 121
+       integer, parameter :: MPI_DISTRIBUTE_CYCLIC = 122
+       integer, parameter :: MPI_DISTRIBUTE_NONE = 123
+       integer, parameter :: MPI_DISTRIBUTE_DFLT_DARG = -49767
 
        include 'mpiof.h'

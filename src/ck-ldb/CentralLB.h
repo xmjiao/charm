@@ -71,9 +71,6 @@ public:
   CkMarshalledCLBStatsMessage bufMsg;
   SpanningTree st;
   CentralLB(const CkLBOptions & opt) : CBase_CentralLB(opt), concurrent(false) { initLB(opt);
-#if (defined(_FAULT_MLOG_) || defined(_FAULT_CAUSAL_))
-        lbDecisionCount= resumeCount=0;
-#endif
 #if CMK_SHRINK_EXPAND
 		manager_init();
 #endif
@@ -95,15 +92,11 @@ public:
 
   void pup(PUP::er &p);
 
-  void turnOn();
-  void turnOff();
-
   void SetPESpeed(int);
   int GetPESpeed();
   inline void setConcurrent(bool c) { concurrent = c; }
 
-  static void staticAtSync(void*);
-  void AtSync(void); // Everything is at the PE barrier
+  void InvokeLB(); // Everything is at the PE barrier
   void ProcessAtSync(void); // Receive a message from AtSync to avoid
                             // making projections output look funny
   void SendStats();
@@ -125,9 +118,6 @@ public:
   void ReceiveMigration(LBMigrateMsg *); 	// Receive migration data
   void ProcessMigrationDecision();
   void ProcessReceiveMigration();
-#if (defined(_FAULT_MLOG_) || defined(_FAULT_CAUSAL_))
-	void ReceiveDummyMigration(int _step);
-#endif
   void MissMigrate(int waitForBarrier);
 
   //Shrink-Expand related functions
@@ -137,18 +127,10 @@ public:
   void WillIbekilled(std::vector<char> avail, int);
   void StartCleanup();
 
-  // manual predictor start/stop
-  static void staticPredictorOn(void* data, void* model);
-  static void staticPredictorOnWin(void* data, void* model, int wind);
-  static void staticPredictorOff(void* data);
-  static void staticChangePredictor(void* data, void* model);
-
   // manual start load balancing
   inline void StartLB() { thisProxy.ProcessAtSync(); }
-  static void staticStartLB(void* data);
 
   // Migrated-element callback
-  static void staticMigrated(void* me, LDObjHandle h, int waitBarrier=1);
   void Migrated(int waitBarrier=1);
 
   void MigrationDone(int balancing);  // Call when migration is complete
@@ -158,48 +140,37 @@ public:
   void FuturePredictor(LDStats* stats);
 
   struct FutureModel {
-    int n_stats;    // total number of statistics allocated
     int cur_stats;   // number of statistics currently present
     int start_stats; // next stat to be written
-    LDStats *collection;
-    int n_objs;     // each object has its own parameters
+    std::vector<LDStats> collection;
     LBPredictorFunction *predictor;
-    double **parameters;
-    bool *model_valid;
+    std::vector<std::vector<double>> parameters;
+    std::vector<bool> model_valid;
 
-    FutureModel(): n_stats(0), cur_stats(0), start_stats(0), collection(NULL),
-	 n_objs(0), parameters(NULL) {predictor = new DefaultFunction();}
+    FutureModel() : FutureModel(0, new DefaultFunction()) {}
 
-    FutureModel(int n): n_stats(n), cur_stats(0), start_stats(0), n_objs(0),
-	 parameters(NULL) {
-      collection = new LDStats[n];
-      //for (int i=0;i<n;++i) collection[i].objData=NULL;
-      predictor = new DefaultFunction();
-    }
+    FutureModel(int n) : FutureModel(n, new DefaultFunction()) {}
 
-    FutureModel(int n, LBPredictorFunction *myfunc): n_stats(n), cur_stats(0), start_stats(0), n_objs(0), parameters(NULL) {
-      collection = new LDStats[n];
-      //for (int i=0;i<n;++i) collection[i].objData=NULL;
-      predictor = myfunc;
+    FutureModel(int n, LBPredictorFunction* myfunc)
+        : cur_stats(0), start_stats(0), collection(n), predictor(myfunc)
+    {
     }
 
     ~FutureModel() {
-      delete[] collection;
-      for (int i=0;i<n_objs;++i) delete[] parameters[i];
-      delete[] parameters;
       delete predictor;
     }
 
-    void changePredictor(LBPredictorFunction *new_predictor) {
+    void changePredictor(LBPredictorFunction* new_predictor)
+    {
+      // gain control of the provided predictor
       delete predictor;
-      int i;
-      // gain control of the provided predictor;
       predictor = new_predictor;
-      for (i=0;i<n_objs;++i) delete[] parameters[i];
-      for (i=0;i<n_objs;++i) {
-	parameters[i] = new double[new_predictor->num_params];
-	model_valid[i] = false;
+
+      for (auto& param_list : parameters)
+      {
+        param_list.resize(new_predictor->num_params);
       }
+      model_valid.assign(model_valid.size(), false);
     }
   };
 
@@ -298,17 +269,8 @@ private:
 
 public:
   int useMem();
-#if (defined(_FAULT_MLOG_) || defined(_FAULT_CAUSAL_))
-    int savedBalancing;
-    void endMigrationDone(int balancing);
-    int lbDecisionCount ,resumeCount;
-#endif
 };
 
-#if (defined(_FAULT_MLOG_) || defined(_FAULT_CAUSAL_)) 
-    void resumeCentralLbAfterChkpt(void *lb);
-	void resumeAfterRestoreParallelRecovery(void *_lb);
-#endif
 
 // CLBStatsMsg is not directly sent in the entry function
 // CkMarshalledCLBStatsMessage is used instead to use the pup defined here.
@@ -328,21 +290,16 @@ public:
   LBRealType total_cputime;
   LBRealType bg_cputime;
 #endif
-  int n_objs;
-  LDObjData *objData;
-  int n_comm;
-  LDCommData *commData;
+  std::vector<LDObjData> objData;
+  std::vector<LDCommData> commData;
 
-  char * avail_vector;
+  std::vector<char> avail_vector;
   int next_lb;
-#if (defined(_FAULT_MLOG_) || defined(_FAULT_CAUSAL_))
-	int step;
-#endif
 
 public:
   CLBStatsMsg(int osz, int csz);
   CLBStatsMsg(): from_pe(0), pe_speed(0), total_walltime(0.0), idletime(0.0),
-		 bg_walltime(0.0), n_objs(0), objData(NULL), n_comm(0),
+		 bg_walltime(0.0),
 #if defined(TEMP_LDB)
 		pe_temp(1.0),
 #endif
@@ -350,7 +307,7 @@ public:
 #if CMK_LB_CPUTIMER
 		 total_cputime(0.0), bg_cputime(0.0),
 #endif
-		 commData(NULL), avail_vector(NULL), next_lb(0) {}
+		 next_lb(0) {}
   ~CLBStatsMsg();
   void pup(PUP::er &p);
 }; 

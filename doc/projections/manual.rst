@@ -98,7 +98,11 @@ tracemode:
 
 -  ``+gz-trace``: generate gzip (if available) compressed log files.
 
--  ``+gz-no-trace``: generate regular (not compressed) log files.
+-  ``+no-gz-trace``: generate regular (uncompressed) log files.
+
+-  ``+notracenested``: a debug option. Does not resume tracing outer
+   entry methods when entry methods are nested (as can happen with
+   ``[local]`` and ``[inline]`` calls.
 
 -  ``+checknested``: a debug option. Checks if events are improperly
    nested while recorded and issue a warning immediately.
@@ -111,7 +115,7 @@ tracemode:
 Tracemode ``summary``
 ~~~~~~~~~~~~~~~~~~~~~
 
-Compile option: ``-tracemode summary``
+Link time option: ``-tracemode summary``
 
 In this tracemode, execution time across all entry points for each
 processor is partitioned into a fixed number of equally sized
@@ -448,7 +452,7 @@ The Projections Performance Visualization Tool
 
 The Projections Java-based visualization tool (henceforth referred to as
 simply Projections) can be downloaded from the Charm++ website at
-http://charm.cs.illinois.edu/software. The directory which you download
+https://charm.cs.illinois.edu/software. The directory which you download
 will henceforth be referred to as ``PROJECTIONS_LOCATION``.
 
 Building Projections
@@ -1388,8 +1392,10 @@ Performance Counters
 
 This view is enabled when Charm++ is compiled with the ``papi`` option,
 which enables the collection of performance counter data using PAPI.
-Currently, this collects ``PAPI_L1_TCM``, ``PAPI_L1_TCA``,
-``PAPI_L2_TCM``, and ``PAPI_L2_TCA`` on all platforms except Cray, where
+Currently, this collects the highest level cache misses and accesses
+available on the system (``PAPI_L1_TCM`` and ``PAPI_L1_TCA``,
+``PAPI_L2_TCM`` and ``PAPI_L2_TCA``, or ``PAPI_L3_TCM`` and
+``PAPI_L3_TCA``) on all platforms except Cray, where
 it collects ``PAPI_FP_OPS``, ``PAPI_TOT_INS``,
 ``perf::PERF_COUNT_HW_CACHE_LL:MISS``, ``DATA_PREFETCHER:ALL``,
 ``PAPI_L1_DCA`` and ``PAPI_TOT_CYC``. This tool shows the values of the

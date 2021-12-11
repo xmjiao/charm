@@ -6,23 +6,35 @@
 #include <new>   // for in-place new operator
 #include "ckhashtable.h"
 #include <vector>
+#include "ckrdma.h"
 
 typedef CkQ<void *> PtrQ;
 class envelope;
 typedef std::vector<CkZeroPtr<envelope> > PtrVec;
+
+// Map to store object index and number of pending rdma ops
+typedef std::unordered_map<CmiUInt8, CmiUInt1> ObjNumRdmaOpsMap;
+typedef std::unordered_map<CmiUInt4, CkNcpyBufferPost> ReqTagPostMap;
+typedef std::unordered_map<CmiUInt4, CkPostedBuffer> ReqTagBufferMap;
 
 class IrrGroup;
 class TableEntry {
     IrrGroup *obj;
     PtrQ *pending; //Buffers msgs recv'd before group is created
     int cIdx;
+    bool ready;
 
   public:
-    TableEntry(int ignored=0) { (void)ignored; obj=0; pending=0; cIdx=-1; }
+    TableEntry(int ignored = 0)
+    : obj(nullptr), pending(nullptr), cIdx(-1), ready(false) {
+      (void)ignored;
+    }
     inline IrrGroup* getObj(void) { return obj; }
     inline void setObj(void *_obj) { obj=(IrrGroup *)_obj; }
     PtrQ* getPending(void) { return pending; }
     inline void clearPending(void) { delete pending; pending = NULL; }
+    inline const bool &isReady(void) const { return this->ready; }
+    inline void setReady(void) { this->ready = true; }
     void enqMsg(void *msg) {
       if (pending==0)
         pending=new PtrQ();
@@ -155,6 +167,18 @@ CkpvExtern(char **,Ck_argv);
 static inline IrrGroup *_localBranch(CkGroupID gID)
 {
   return CkpvAccess(_groupTable)->find(gID).getObj();
+}
+
+// Similar to _localBranch, but should be used from non-PE-local, but node-local PE
+// Ensure thread safety while using this function as it is accessing a non-PE-local group
+static inline IrrGroup *_localBranchOther(CkGroupID gID, int rank)
+{
+  if (rank == CkMyRank()) {
+    return _localBranch(gID);
+  } else {
+    auto &entry = CkpvAccessOther(_groupTable, rank)->find(gID);
+    return entry.isReady() ? entry.getObj() : nullptr; // ensures the object was created
+  }
 }
 
 extern void _registerCommandLineOpt(const char* opt);

@@ -1,4 +1,4 @@
-/* -*- Mode: C; c-basic-offset:4 ; -*- */
+/* -*- Mode: C; c-basic-offset:4 ; indent-tabs-mode:nil ; -*- */
 /* 
  *
  *   Copyright (C) 1997 University of Chicago. 
@@ -10,6 +10,8 @@
 #endif
 #include "adio.h"
 #include "mpio.h"
+
+#include "romio_fortran.h"
 
 
 #if defined(MPIO_BUILD_PROFILING) || defined(HAVE_WEAK_SYMBOLS)
@@ -106,7 +108,7 @@ void mpi_file_get_view_(MPI_Fint *fh,MPI_Offset *disp,MPI_Fint *etype,
     char *tmprep;
 
     if (datarep <= (char *) 0) {
-        FPRINTF(stderr, "MPI_File_get_view: datarep is an invalid address\n");
+        romio_fortran_error_print("MPI_File_get_view: datarep is an invalid address\n");
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
@@ -156,7 +158,7 @@ FORTRAN_API void FORT_CALL mpi_file_get_view_( MPI_Fint *fh, MPI_Offset *disp, M
 
 /* Initialize the string to all blanks */
     if (datarep <= (char *) 0) {
-        FPRINTF(stderr, "MPI_File_get_view: datarep is an invalid address\n");
+        romio_fortran_error_print("MPI_File_get_view: datarep is an invalid address\n");
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
     
@@ -180,6 +182,8 @@ FORTRAN_API void FORT_CALL mpi_file_get_view_( MPI_Fint *fh, MPI_Offset *disp, M
         *ierr = MPI_ERR_UNKNOWN;
     }
 
+    *etype = MPI_Type_c2f(etype_c);
+    *filetype = MPI_Type_c2f(filetype_c);
     ADIOI_Free(tmprep);
 }
 #endif

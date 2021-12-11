@@ -76,6 +76,7 @@ my $x86;
 my $amd64;
 my $ppc;
 my $arm7;
+my $arm8;
 # Determine architecture (x86, ppc, ...)
 if($cpu =~ m/i[0-9]86/){
   $x86 = 1;
@@ -85,7 +86,9 @@ if($cpu =~ m/i[0-9]86/){
   $ppc = 1;
 } elsif($cpu =~ m/ppc*/){
   $ppc = 1;
-} elsif($cpu =~ m/arm7/){
+} elsif($cpu =~ m/aarch64*/ || $cpu =~ m/arm64*/){
+  $arm8 = 1;
+} elsif($cpu =~ m/arm7/ || $cpu =~ m/armv7*/ || $cpu =~ m/armv6*/){
   $arm7 = 1;
 }
 
@@ -130,7 +133,7 @@ if($skip_choosing eq "false"){
 }
 
 
-# check for GNI
+# check for Cray
 
 if($skip_choosing eq "false"){
   my $craycc_found = index(`which CC 2>/dev/null`, "/opt/cray/") != -1;
@@ -140,11 +143,23 @@ if($skip_choosing eq "false"){
     $PE_PRODUCT_LIST = "";
   }
 
+  my $CRAYPE_NETWORK_TARGET = $ENV{'CRAYPE_NETWORK_TARGET'};
+  if (not defined $CRAYPE_NETWORK_TARGET) {
+    $CRAYPE_NETWORK_TARGET = "";
+  }
+
   my $CRAY_UGNI_found = index(":$PE_PRODUCT_LIST:", ":CRAY_UGNI:") != -1;
 
   my $gni_found = $craycc_found || $CRAY_UGNI_found;
 
-  if ($gni_found) {
+  if ($CRAYPE_NETWORK_TARGET eq "ofi") {
+    print "\nI found that you have a Cray environment.\nDo you want to build Charm++ targeting Cray Shasta? [Y/n]: ";
+    my $p = promptUserYN();
+    if($p eq "yes" || $p eq "default") {
+                  $arch = "ofi-crayshasta";
+                  $skip_choosing = "true";
+    }
+  } elsif ($gni_found) {
     my $CRAYPE_INTERLAGOS_found = index(":$PE_PRODUCT_LIST:", ":CRAYPE_INTERLAGOS:") != -1;
     if ($CRAYPE_INTERLAGOS_found) {
       print "\nI found that you have a Cray environment with Interlagos processors.\nDo you want to build Charm++ targeting Cray XE? [Y/n]: ";
@@ -196,6 +211,22 @@ if($skip_choosing eq "false"){
     my $p = promptUserYN();
     if($p eq "yes" || $p eq "default") {
       $converse_network_type = "pamilrts";
+      $skip_choosing = "true";
+    }
+  }
+}
+
+
+# check for UCX
+
+if($skip_choosing eq "false"){
+  my $ucx_found = index(`cc $tempfile -Wl,-lucp 2>&1`, "-lucp") == -1;
+
+  if ($ucx_found) {
+    print "\nI found that you have UCX libs available in your toolchain.\nDo you want to build Charm++ targeting UCX? [Y/n]: ";
+    my $p = promptUserYN();
+    if($p eq "yes" || $p eq "default") {
+      $converse_network_type = "ucx";
       $skip_choosing = "true";
     }
   }
@@ -263,6 +294,7 @@ Choose an interconnect from below: [1-10]
 	 5) Blue Gene/Q
 	 6) Intel Omni-Path (ofi)
 	 7) PAMI
+	 8) UCX
 
 EOF
 
@@ -288,6 +320,9 @@ EOF
 		last;
 	  } elsif($line eq "7"){
 		$converse_network_type = "pamilrts";
+		last;
+	  } elsif($line eq "8"){
+		$converse_network_type = "ucx";
 		last;
 	  } else {
 		print "Invalid option, please try again :P\n"
@@ -321,24 +356,18 @@ if($arch eq ""){
 		$arch = $arch . "-x86_64";
 	  } elsif($ppc){
 		$arch = $arch . "-ppc64le";
+	  } elsif($arm8){
+	  	$arch = $arch . "-arm8";
 	  } elsif($arm7){
 	  	$arch = $arch . "-arm7";
 	  }
-}
-
-# Fixup $arch to match the inconsistent directories in src/archs
-
-if($arch eq "netlrts-darwin"){
-	$arch = "netlrts-darwin-x86_64";
-} elsif($arch eq "multicore-linux-arm7"){
-	$arch = "multicore-arm7";
 }
 
 
 #================ Choose SMP/PXSHM =================================
 
 # find what options are available
-my $opts = `$dirname/build charm++ $arch help 2>&1 | grep "Supported options"`;
+my $opts = `$dirname/buildold charm++ $arch help 2>&1 | grep "Supported options"`;
 $opts =~ m/Supported options: (.*)/;
 $opts = $1;
 
@@ -385,7 +414,7 @@ if ($counter != 1) {
 #================ Choose Compiler =================================
 
 # Lookup list of compilers
-my $cs = `$dirname/build charm++ $arch help 2>&1 | grep "Supported compilers"`;
+my $cs = `$dirname/buildold charm++ $arch help 2>&1 | grep "Supported compilers"`;
 # prune away beginning of the line
 $cs =~ m/Supported compilers: (.*)/;
 $cs = $1;
@@ -434,18 +463,16 @@ $explanations{"flang"} = "Use the flang compiler for Fortran";
 $explanations{"ifort"} = "Use Intel's ifort Fortran compiler";
 $explanations{"pgf90"} = "Use Portland Group's pgf90 Fortran compiler";
 $explanations{"syncft"} = "Use fault tolerance support";
-$explanations{"mlogft"} = "Use message logging fault tolerance support";
-$explanations{"causalft"} = "Use causal message logging fault tolerance support";
 $explanations{"omp"} = "Build Charm++ with integrated OpenMP support";
 $explanations{"papi"} = "Enable PAPI performance counters";
-$explanations{"pedantic"} = "Enable pedantic compiler warnings";
-$explanations{"bigemulator"} = "Build additional BigSim libraries";
-$explanations{"bigsim"} = "Compile Charm++ as running on the BigSim emulator";
 $explanations{"nolb"} = "Build without load balancing support";
 $explanations{"perftools"} = "Build with support for the Cray perftools";
 $explanations{"persistent"} = "Build the persistent communication interface";
+$explanations{"simplepmi"} = "Use simple PMI for task launching";
 $explanations{"slurmpmi"} = "Use Slurm PMI for task launching";
 $explanations{"slurmpmi2"} = "Use Slurm PMI2 for task launching";
+$explanations{"ompipmix"} = "Use Open MPI PMIX for task launching";
+$explanations{"openpmix"} = "Use OpenPMIx for task launching";
 $explanations{"tsan"} = "Compile Charm++ with support for Thread Sanitizer";
 
 
@@ -579,7 +606,7 @@ print << "EOF";
 What do you want to build?
 	1) Charm++ [default] (choose this if you are building NAMD)
 	2) Charm++ and AMPI
-	3) Charm++, AMPI, ParFUM, FEM and other libraries
+	3) Charm++, AMPI, ParFUM and other libraries
 
 EOF
 

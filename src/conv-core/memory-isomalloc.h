@@ -4,64 +4,78 @@ migratable heap allocation to arbitrary clients.
 #ifndef CMK_MEMORY_ISOMALLOC_H
 #define CMK_MEMORY_ISOMALLOC_H
 
-/*Grab CmiIsomalloc* protoypes, and CmiIsomallocBlock*/
 #include <stddef.h>
 #include "conv-config.h"
 
 #ifdef __cplusplus
+#include <vector>
+#include <tuple>
+
 extern "C" {
 #endif
 
 /****** Isomalloc: Migratable Memory Allocation ********/
-/*Simple block-by-block interface:*/
-void  CmiIsomallocPup(pup_er p,void **block);
-void  CmiIsomallocFree(void *block);
-int   CmiIsomallocEnabled();
-void  CmiEnableIsomalloc();
-void  CmiDisableIsomalloc();
+int CmiIsomallocEnabled(void);
 
-CmiInt8   CmiIsomallocLength(void *block);
-int   CmiIsomallocInRange(void *addr);
+int CmiIsomallocInRange(void * addr);
 
-#if CMK_USE_MEMPOOL_ISOMALLOC
-struct mempool_type;
+typedef struct CmiIsomallocContext {
+  void * opaque;
+} CmiIsomallocContext;
+
+typedef struct CmiIsomallocRegion {
+  void * start, * end;
+} CmiIsomallocRegion;
+
+/*Build/pup/destroy a context.*/
+/* TODO: Some kind of registration scheme so multiple users can coexist.
+ * No use case for this currently exists. */
+CmiIsomallocContext CmiIsomallocContextCreate(int myunit, int numunits);
+void CmiIsomallocContextDelete(CmiIsomallocContext ctx);
+void CmiIsomallocContextPup(pup_er p, CmiIsomallocContext * ctxptr);
+void CmiIsomallocContextEnableRandomAccess(CmiIsomallocContext ctx);
+void CmiIsomallocContextJustMigrated(CmiIsomallocContext ctx);
+void CmiIsomallocEnableRDMA(CmiIsomallocContext ctx, int enable); /* on by default */
+CmiIsomallocRegion CmiIsomallocContextGetUsedExtent(CmiIsomallocContext ctx);
+
+/*Allocate/free from this context*/
+void * CmiIsomallocContextMalloc(CmiIsomallocContext ctx, size_t size);
+void * CmiIsomallocContextMallocAlign(CmiIsomallocContext ctx, size_t align, size_t size);
+void * CmiIsomallocContextCalloc(CmiIsomallocContext ctx, size_t nelem, size_t size);
+void * CmiIsomallocContextRealloc(CmiIsomallocContext ctx, void * ptr, size_t size);
+void CmiIsomallocContextFree(CmiIsomallocContext ctx, void * ptr);
+size_t CmiIsomallocContextGetLength(CmiIsomallocContext ctx, void * ptr);
+void CmiIsomallocContextProtect(CmiIsomallocContext ctx, void * addr, size_t len, int prot);
+
+void * CmiIsomallocContextPermanentAlloc(CmiIsomallocContext ctx, size_t size);
+void * CmiIsomallocContextPermanentAllocAlign(CmiIsomallocContext ctx, size_t align, size_t size);
+
+CmiIsomallocContext CmiIsomallocGetThreadContext(CthThread th);
+
+void CmiIsomallocContextEnableRecording(CmiIsomallocContext ctx, int enable); /* internal use only */
+#ifdef __cplusplus
+void CmiIsomallocGetRecordedHeap(CmiIsomallocContext ctx,
+  std::vector<std::tuple<uintptr_t, size_t, size_t>> & heap_vector);
 #endif
 
-/*List-of-blocks interface:*/
-struct CmiIsomallocBlockList {/*Circular doubly-linked list of blocks:*/
-  struct CmiIsomallocBlockList *prev, *next;
-#if CMK_USE_MEMPOOL_ISOMALLOC
-  struct mempool_type *pool;
-#endif
-  /*actual data of block follows here...*/
-};
-typedef struct CmiIsomallocBlockList CmiIsomallocBlockList;
+/****** Converse Thread functionality that depends on Isomalloc ********/
 
-/*Build/pup/destroy an entire blockList.*/
-CmiIsomallocBlockList *CmiIsomallocBlockListNew(void);
-void CmiIsomallocBlockListPup(pup_er p, CmiIsomallocBlockList **l);
-void CmiIsomallocBlockListDelete(CmiIsomallocBlockList *l);
+int CthMigratable(void);
+CthThread CthPup(pup_er, CthThread);
+CthThread CthCreateMigratable(CthVoidFn fn, void * arg, int size, CmiIsomallocContext ctx);
 
-/*Allocate/free a block from this blockList*/
-void *CmiIsomallocBlockListMalloc(CmiIsomallocBlockList *l,size_t nBytes);
-void *CmiIsomallocBlockListMallocAlign(CmiIsomallocBlockList *l,size_t align,size_t nBytes);
-void CmiIsomallocBlockListFree(void *doomedMallocedBlock);
-
-/* Allocate a block from the blockList associated with a thread */
-void *CmiIsomallocMallocForThread(CthThread th, size_t nBytes);
-void *CmiIsomallocMallocAlignForThread(CthThread th, size_t align, size_t nBytes);
+/****** Memory-Isomalloc: malloc wrappers for Isomalloc ********/
 
 /*Allocate non-migratable memory*/
-void *malloc_nomigrate(size_t size);
+void * malloc_nomigrate(size_t size);
 void free_nomigrate(void *mem);
 
-/*Reentrant versions of memory routines, used inside isomalloc*/
-void *malloc_reentrant(size_t size);
-void free_reentrant(void *mem);
+/*Make this context active for malloc interception.*/
+void CmiMemoryIsomallocContextActivate(CmiIsomallocContext ctx);
 
-/*Make this blockList active (returns the old blocklist).*/
-CmiIsomallocBlockList *CmiIsomallocBlockListActivate(CmiIsomallocBlockList *l);
-CmiIsomallocBlockList *CmiIsomallocBlockListCurrent();
+/* Only for internal runtime use, not for Isomalloc users. */
+void CmiMemoryIsomallocDisablePush(void);
+void CmiMemoryIsomallocDisablePop(void);
 
 #ifdef __cplusplus
 }

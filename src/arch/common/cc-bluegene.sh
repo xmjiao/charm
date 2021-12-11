@@ -16,8 +16,6 @@ BGQ_BIN=$BGQ_FLOOR/gnu-linux/bin
 BGQ_ZLIB=/soft/libraries/alcf/current/xl/ZLIB/
 
 GCC_OPTS="-Wno-deprecated "
-OPTS_CPP="$OPTS_CPP"
-OPTS_LD="$OPTS_LD"
 
 CMK_CPP_CHARM="$BGQ_BIN/powerpc64-bgq-linux-cpp -P"
 CMK_CPP_C="$BGQ_BIN/powerpc64-bgq-linux-cpp "
@@ -26,10 +24,15 @@ CMK_CPP_C_FLAGS="-E"
 
 CMK_LD_LIBRARY_PATH="-Wl,-rpath,$CHARMLIBSO/"
 
-CMK_NATIVE_CC='gcc '
-CMK_NATIVE_LD='gcc '
-CMK_NATIVE_CXX='g++ -Wno-deprecated '
+CMK_NATIVE_CC='gcc'
+CMK_NATIVE_LD='gcc'
+CMK_NATIVE_CXX='g++'
 CMK_NATIVE_LDXX='g++'
+
+CMK_NATIVE_CC_FLAGS='-Wno-deprecated'
+CMK_NATIVE_CXX_FLAGS='-Wno-deprecated'
+CMK_NATIVE_LD_FLAGS=''
+CMK_NATIVE_LDXX_FLAGS=''
 
 CMK_LIBS='-lckqt'
 CMK_RANLIB="$BGQ_BIN/powerpc64-bgq-linux-ranlib "
@@ -47,5 +50,7 @@ CMK_MOD_NAME_ALLCAPS=1
 CMK_MOD_EXT="mod"
 CMK_F90_USE_MODDIR=1
 CMK_F90_MODINC="-I"
+
+CMK_NO_ISO_MALLOC='1'
 
 CMK_BLUEGENEQ="1"

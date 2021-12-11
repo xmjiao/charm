@@ -83,11 +83,11 @@ class zerocopyObject : public CBase_zerocopyObject{
       }
     }
 
-    void zerocopySend(int &n1, int *& ptr1, CkNcpyBufferPost *ncpyPost) {
+    void zerocopySend(int n1, int *ptr1, CkNcpyBufferPost *ncpyPost) {
       CkAssert(iArr1 != NULL);
-      ptr1 = iArr1;
-
-      ncpyPost[0].mode = CK_BUFFER_PREREG;
+      ncpyPost[0].regMode = CK_BUFFER_PREREG;
+      CkMatchBuffer(ncpyPost, 0, thisIndex);
+      CkPostBuffer(iArr1, n1, thisIndex);
     }
 
     void zerocopySend(int n1, int *ptr1){
@@ -107,7 +107,6 @@ class zerocopyObject : public CBase_zerocopyObject{
 
     void zerocopySent(CkDataMsg *msg) {
       CkNcpyBuffer *src = (CkNcpyBuffer *)(msg->data);
-      src->deregisterMem();
       CkRdmaFree((void *)src->ptr);
       delete msg;
 

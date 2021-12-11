@@ -8,6 +8,7 @@
 #define TOTAL_ITER    40
 
 int numElements;
+CProxy_Main mProxy;
 
 //Main chare
 class Main : public CBase_Main{
@@ -17,7 +18,10 @@ class Main : public CBase_Main{
         ckout<<"Usage: zerocopy <numelements>"<<endl;
         CkExit(1);
       }
+
       numElements = atoi(m->argv[1]);
+      mProxy = thisProxy;
+
       delete m;
       if(numElements%2 != 0){
         ckout<<"Argument <numelements> should be even"<<endl;
@@ -28,7 +32,6 @@ class Main : public CBase_Main{
       CkArrayOptions opts(numElements);
       opts.setMap(rrMap);
       CProxy_zerocopyObject zerocopyObj = CProxy_zerocopyObject::ckNew(opts);
-      zerocopyObj.testZeroCopy(thisProxy);
     }
 
     void done(){
@@ -77,9 +80,8 @@ class zerocopyObject : public CBase_zerocopyObject{
   int destIndex, iter, num, j;
   int mixedZeroCopySentCounter, sdagZeroCopySentCounter, sdagZeroCopyRecvCounter;
   bool firstMigrationPending;
-  CkCallback cb, sdagCb;
+  CkCallback cb, sdagCb, cbCopy, compReductionCb, lbReductionCb;
   int idx_zerocopySent, idx_sdagZeroCopySent;;
-  CProxy_Main mainProxy;
 
   public:
     zerocopyObject_SDAG_CODE
@@ -107,7 +109,12 @@ class zerocopyObject : public CBase_zerocopyObject{
       idx_zerocopySent = CkIndex_zerocopyObject::zerocopySent(NULL);
       idx_sdagZeroCopySent = CkIndex_zerocopyObject::sdagZeroCopySent(NULL);
       cb = CkCallback(idx_zerocopySent, thisProxy[thisIndex]);
+      cbCopy = cb;
       sdagCb = CkCallback(idx_sdagZeroCopySent, thisProxy[thisIndex]);
+      compReductionCb = CkCallback(CkReductionTarget(Main, done), mProxy);
+      lbReductionCb = CkCallback(CkReductionTarget(zerocopyObject, BarrierDone), thisProxy);
+
+      testZeroCopy();
     }
 
     void pup(PUP::er &p){
@@ -120,8 +127,9 @@ class zerocopyObject : public CBase_zerocopyObject{
       p|mixedZeroCopySentCounter;
       p|sdagZeroCopySentCounter;
       p|sdagZeroCopyRecvCounter;
-      p|mainProxy;
       p|sdagCb;
+      p|compReductionCb;
+      p|lbReductionCb;
 
       // sdagRun only uses iArr1 and dArr2
       // other others needn't be pupped/unpupped
@@ -162,9 +170,12 @@ class zerocopyObject : public CBase_zerocopyObject{
     void zerocopySent(CkDataMsg *m){
       // Get access to the array information sent via zerocopy
       CkNcpyBuffer *src = (CkNcpyBuffer *)(m->data);
-      // de-register the memory
-      src->deregisterMem();
-      free((void *)(src->ptr));
+      int refNum = CkGetRefNum(m);
+
+      if(refNum == 1)
+        delete [] (double *)(src->ptr);
+      else
+        delete [] (int *)(src->ptr);
 
       delete m;
 
@@ -179,9 +190,6 @@ class zerocopyObject : public CBase_zerocopyObject{
       // Get access to the array information sent via zerocopy
       CkNcpyBuffer *src = (CkNcpyBuffer *)(m->data);
 
-      // de-register the memory
-      src->deregisterMem();
-
       void *ptr = (void *)(src->ptr); // do not free pointer as it is used in the next iteration as well
 
       delete m;
@@ -191,7 +199,7 @@ class zerocopyObject : public CBase_zerocopyObject{
         nextStep();
     }
 
-    void testZeroCopy(CProxy_Main mProxy){
+    void testZeroCopy(){
       iSize1 = 210;
       iSize2 = 11;
       dSize1 = 4700;
@@ -201,7 +209,6 @@ class zerocopyObject : public CBase_zerocopyObject{
       iOffset1 = 3;
       cOffset1 = 2;
 
-      mainProxy = mProxy;
       if(thisIndex < numElements/2){
         assignValues(iArr1, iSize1);
         assignValues(iArr2, iSize2);
@@ -242,15 +249,19 @@ class zerocopyObject : public CBase_zerocopyObject{
       }
     }
 
-    void zerocopySend(int &n1, int *& ptr1, int &n2, double *& ptr2, int &n3, char *& ptr3, CkNcpyBufferPost *ncpyPost) {
+    void zerocopySend(int n1, int *ptr1, int n2, double *ptr2, int n3, char *ptr3, CkNcpyBufferPost *ncpyPost) {
       DEBUG(ckout<<"["<<CkMyPe()<<"] "<<thisIndex<<"->"<<destIndex<<": ZeroCopy send post"<<endl;)
-      ptr1 = iArr1;
-      ptr2 = dArr1;
-      ptr3 = cArr1;
+      ncpyPost[0].regMode = CK_BUFFER_REG;
+      ncpyPost[1].regMode = CK_BUFFER_UNREG;
+      ncpyPost[2].regMode = CK_BUFFER_REG;
 
-      ncpyPost[0].mode = CK_BUFFER_REG;
-      ncpyPost[1].mode = CK_BUFFER_UNREG;
-      ncpyPost[2].mode = CK_BUFFER_REG;
+      CkPostBuffer(iArr1, n1, thisIndex*7);
+      CkPostBuffer(dArr1, n2, thisIndex*7 + 1);
+      CkPostBuffer(cArr1, n3, thisIndex*7 + 2);
+
+      CkMatchBuffer(ncpyPost, 0, thisIndex*7);
+      CkMatchBuffer(ncpyPost, 1, thisIndex*7 + 1);
+      CkMatchBuffer(ncpyPost, 2, thisIndex*7 + 2);
     }
 
     void zerocopySend(int n1, int *ptr1, int n2, double *ptr2, int n3, char *ptr3){
@@ -269,9 +280,13 @@ class zerocopyObject : public CBase_zerocopyObject{
       }
     }
 
-    void mixedSend(int n1, int *ptr1, int n2, double *& ptr2, int n3, int *& ptr3, int n4, double *ptr4, CkNcpyBufferPost *ncpyPost) {
-      ptr2 = dArr1;
-      ptr3 = iArr2;
+    void mixedSend(int n1, int *ptr1, int n2, double *ptr2, int n3, int *ptr3, int n4, double *ptr4, CkNcpyBufferPost *ncpyPost) {
+
+      CkMatchBuffer(ncpyPost, 0, thisIndex*7 + 3);
+      CkPostBuffer(dArr1, n2, thisIndex*7 + 3);
+
+      CkMatchBuffer(ncpyPost, 1, thisIndex*7 + 4);
+      CkPostBuffer(iArr2, n3, thisIndex*7 + 4);
     }
 
     void mixedSend(int n1, int *ptr1, int n2, double *ptr2, int n3, int *ptr3, int n4, double *ptr4){
@@ -293,7 +308,10 @@ class zerocopyObject : public CBase_zerocopyObject{
         allocateAndCopyArray(iArr1copy, iArr1, n1);
         allocateAndCopyArray(dArr2copy, dArr2, n4);
 
-        thisProxy[destIndex].mixedSend(n1, iArr1, n2, CkSendBuffer(dArr1, cb), n3, CkSendBuffer(iArr2, cb), n4, dArr2);
+        cb.setRefNum(1);
+        cbCopy.setRefNum(1);
+
+        thisProxy[destIndex].mixedSend(n1, iArr1, n2, CkSendBuffer(dArr1, cb), n3, CkSendBuffer(iArr2, cbCopy), n4, dArr2);
       }
     }
 
@@ -305,23 +323,20 @@ class zerocopyObject : public CBase_zerocopyObject{
       if(thisIndex == 0)
           CkPrintf("sdagRun: Iteration %d completed\n", iter);
 
-      //increase iteration and continue
-      iter++;
-
-      //load balance
-      if(iter % LBPERIOD_ITER == 0)
-        AtSync();
-      else if(iter<= TOTAL_ITER)
+      if(iter < TOTAL_ITER)
         thisProxy[thisIndex].sdagRun();
-      else {
-        CkCallback reductionCb(CkReductionTarget(Main, done), mainProxy);
-        contribute(reductionCb);
-      }
+      else
+        contribute(compReductionCb);
     }
 
-    void sdagRecv(int iter, int &n1, int *& ptr1, int &n2, double *&ptr2, CkNcpyBufferPost *ncpyPost) {
-      ptr1 = iArr1;
-      ptr2 = dArr2;
+    void sdagRecv(int index, int &n1, int *& ptr1, int &n2, double *&ptr2, CkNcpyBufferPost *ncpyPost) {
+
+      CkMatchBuffer(ncpyPost, 0, thisIndex*7 + 5);
+      CkPostBuffer(iArr1, n1, thisIndex*7 + 5);
+
+      CkMatchBuffer(ncpyPost, 1, thisIndex*7 + 6);
+      CkPostBuffer(dArr2, n2, thisIndex*7 + 6);
+
       // NOTE: The same arrays are used to receive the data for all the 'num' sdag iterations and
       // the 'TOTAL_ITER' application iterations. This is entirely for the purpose of demonstration
       // and results in the same array being overwritten. It is important to note that messages can
@@ -329,9 +344,6 @@ class zerocopyObject : public CBase_zerocopyObject{
       // doesn't receive the arrays correctly.
     }
 
-    void ResumeFromSync() {
-      thisProxy[thisIndex].sdagRun();
-    }
 };
 
 #include "simpleZeroCopy.def.h"

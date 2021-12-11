@@ -28,12 +28,12 @@ platforms supported by Charm++ are the IBM BlueGene/Q and OpenPOWER
 systems, Cray XE, XK, and XC systems, Omni-Path and Infiniband clusters,
 single workstations and networks of workstations (including x86 (running
 Linux, Windows, MacOS)), etc. The communication protocols and
-infrastructures supported by Charm++ are UDP, MPI, OFI, Infiniband,
+infrastructures supported by Charm++ are UDP, MPI, OFI, UCX, Infiniband,
 uGNI, and PAMI. Charm++ programs can run without changing the source on
 all these platforms. Charm++ programs can also interoperate with MPI
-programs (§ :numref:`sec:interop`). Please see the Installation and Usage
+programs (Section :numref:`sec:mpiinterop`). Please see the Installation and Usage
 section for details about installing, compiling and running Charm++
-programs (§ :numref:`sec:install`).
+programs (Section :numref:`sec:install`).
 
 Programming Model
 -----------------
@@ -53,7 +53,7 @@ Charm++ family of the same model.
 Execution Model
 ---------------
 
-A basic unit of parallel computation in Charm++ programs is a *chare* .
+A basic unit of parallel computation in Charm++ programs is a *chare*.
 A chare is similar to a process, an actor, an ADA task, etc. At its most
 basic level, it is just a C++ object. A Charm++ computation consists of
 a large number of chares distributed on available processors of the
@@ -87,8 +87,7 @@ scheduler, it repeats the cycle. I.e. there is no pre-emptive scheduling
 of other invocations.
 
 When a chare method executes, it may create method invocations for other
-chares. The Charm Runtime System (RTS, sometimes referred to as the
-Chare Kernel in the manual) locates the PE where the targeted chare
+chares. The Charm Runtime System (RTS) locates the PE where the targeted chare
 resides, and delivers the invocation to the scheduler on that PE.
 
 Methods of a chare that can be remotely invoked are called *entry*
@@ -122,7 +121,7 @@ So, one can think of Charm++ as supporting a *global object space*.
 
 Every Charm++ program must have at least one mainchare. Each mainchare
 is created by the system on processor 0 when the Charm++ program starts
-up. Execution of a Charm++ program begins with the Charm Kernel
+up. Execution of a Charm++ program begins with the Charm RTS
 constructing all the designated mainchares. For a mainchare named X,
 execution starts at constructor X() or X(CkArgMsg \*) which are
 equivalent. Typically, the mainchare constructor starts the computation
@@ -146,7 +145,7 @@ allowing for some localized non-determinism (e.g. a pair of methods may
 execute in any order, but when they both finish, the execution continues
 in a pre-determined manner, say executing a 3rd entry method). To
 simplify expression of such control structures, Charm++ provides two
-methods: the structured dagger notation (Sec :numref:`sec:sdag`), which
+methods: the structured dagger notation (Section :numref:`sec:sdag`), which
 is the main notation we recommend you use. Alternatively, you may use
 threaded entry methods, in combination with *futures* and *sync* methods
 (See :numref:`threaded`). The threaded methods run in light-weight
@@ -193,7 +192,7 @@ features of the Charm++ programming system. Part I, “Basic Usage”, is
 sufficient for writing full-fledged applications. Note that only the
 last two chapters of this part involve the notion of physical processors
 (cores, nodes, ..), with the exception of simple query-type utilities
-(Sec :numref:`basic utility fns`). We strongly suggest that all
+(Section :numref:`basic utility fns`). We strongly suggest that all
 application developers, beginners and experts alike, try to stick to the
 basic language to the extent possible, and use features from the
 advanced sections only when you are convinced they are essential. (They
@@ -287,6 +286,8 @@ programs can be referred in section :numref:`basic utility fns`.
 Basic Charm++ Programming
 =========================
 
+.. _programstructure:
+
 Program Structure, Compilation and Utilities
 --------------------------------------------
 
@@ -345,6 +346,14 @@ Syntax highlighting in Emacs can be enabled by triggering C++ handling on the .c
 
    (add-to-list 'auto-mode-alist '("\\.ci\\'" . c++-mode))
 
+Pygments
+''''''''
+
+Pygments supports syntax highlighting of .ci files starting with version 2.4.0,
+when setting ``charmci`` as the highlighting language, or automatically for files with
+the ``.ci`` filename extension.
+
+
 Modules
 ~~~~~~~
 
@@ -356,7 +365,7 @@ cannot be nested, but each *ci* file can have several modules. Modules
 are specified using the keyword *module*. A module name must be a valid
 C++ identifier.
 
-.. code-block:: c++
+.. code-block:: charmci
 
    module myFirstModule {
        // Parallel interface declarations go here
@@ -396,7 +405,7 @@ A module may depend on the parallel entities declared in another module.
 It can express this dependency using the *extern* keyword. *extern* ed
 modules do not have to be present in the same *ci* file.
 
-.. code-block:: c++
+.. code-block:: charmci
 
    module mySecondModule {
 
@@ -431,7 +440,7 @@ modules. The decl.h and def.h files may be generated for other modules,
 but the runtime system is not aware of entities declared in such
 unreachable modules.
 
-.. code-block:: c++
+.. code-block:: charmci
 
    module A {
        ...
@@ -475,7 +484,7 @@ become laborious if the decl.h file has to included in several places.
 Charm++ supports the keyword *include* in *ci* files to permit the
 inclusion of any header directly into the generated decl.h files.
 
-.. code-block:: c++
+.. code-block:: charmci
 
    module A {
        include "myUtilityClass.h"; //< Note the semicolon
@@ -533,9 +542,10 @@ when running a Charm++ program.
 ``void CkAssert(int expression)``
 Aborts the program if expression is 0.
 
-``void CkAbort(const char \*message)``
+``void CkAbort(const char *format, ...)``
 Causes the program to abort, printing
-the given error message. This function never returns.
+the given error message. Supports printf-style formatting.
+This function never returns.
 
 ``void CkExit()``
 This call informs the Charm RTS that computation on all
@@ -547,7 +557,7 @@ synchronization that all useful work has finished before calling
 CkExit().
 
 ``double CkWallTimer()``
-Returns the elapsed wall time since the start of execution.
+Returns the elapsed wall time since the start of execution in seconds.
 
 Information about Logical Machine Entities
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -650,7 +660,7 @@ entry method and is used to create or spawn chare objects during
 execution. Class member functions are annotated as entry methods by
 declaring them in the interface file as:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    entry void Entry1(parameters);
 
@@ -666,7 +676,7 @@ parameter marshalling.
 For example, a chare could have this entry method declaration in the
 interface (``.ci``) file:
 
-.. code-block:: c++
+.. code-block:: charmci
 
      entry void foo(int i,int k);
 
@@ -677,7 +687,7 @@ Since Charm++ runs on distributed memory machines, we cannot pass an
 array via a pointer in the usual C++ way. Instead, we must specify the
 length of the array in the interface file, as:
 
-.. code-block:: c++
+.. code-block:: charmci
 
      entry void bar(int n,double arr[n]);
 
@@ -699,7 +709,7 @@ section.
 Array parameters and other parameters can be combined in arbitrary ways,
 as:
 
-.. code-block:: c++
+.. code-block:: charmci
 
      entry void doLine(float data[n],int n);
      entry void doPlane(float data[n*n],int n);
@@ -734,7 +744,7 @@ large structure by reference than by value.
 As an example, refer to the following code from
 ``examples/charm++/PUP/HeapPUP``:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // In HeapObject.h:
 
@@ -811,7 +821,7 @@ constructor that is an entry method, and may have any number of other
 entry methods. All chare classes and their entry methods are declared in
 the interface (``.ci``) file:
 
-.. code-block:: c++
+.. code-block:: charmci
 
        chare ChareType
        {
@@ -969,14 +979,14 @@ Read-only variables are declared by using the type modifier readonly,
 which is similar to const in C++. Read-only data is specified in the
 ``.ci`` file (the interface file) as:
 
-.. code-block:: c++
+.. code-block:: charmci
 
     readonly Type ReadonlyVarName;
 
 The variable ReadonlyVarName is declared to be a read-only variable of
 type Type. Type must be a single token and not a type expression.
 
-.. code-block:: c++
+.. code-block:: charmci
 
     readonly message MessageType *ReadonlyMsgName;
 
@@ -985,7 +995,7 @@ type MessageType. Pointers are not allowed to be readonly variables
 unless they are pointers to message types. In this case, the message
 will be initialized on every PE.
 
-.. code-block:: c++
+.. code-block:: charmci
 
     readonly Type ReadonlyArrayName [arraysize];
 
@@ -1044,7 +1054,7 @@ Declaring a One-dimensional Array
 
 You can declare a one-dimensional (1D) chare array as:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    //In the .ci file:
    array [1D] A {
@@ -1073,8 +1083,8 @@ several fields:
        void someEntry(parameters2);
    };
 
-Note that A must have a *migration constructor*, which is typically
-empty:
+Note that A must have a *migration constructor* if it is to be migratable.
+The migration constructor is typically empty:
 
 .. code-block:: c++
 
@@ -1099,7 +1109,7 @@ Declaring Multi-dimensional Arrays
 Charm++ supports multi-dimensional or user-defined indices. These array
 types can be declared as:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    //In the .ci file:
    array [1D]  ArrayA { entry ArrayA(); entry void e(parameters);}
@@ -1327,7 +1337,7 @@ callback to the reduction target, the entry method index is generated by
 ``CkIndex_ChareClass::method_name(...)``. For example, the code for a
 typed reduction that yields an ``int``, would look like this:
 
-.. code-block:: c++
+.. code-block:: charmci
 
      // In the .ci file...
      entry [reductiontarget] void done(int result);
@@ -1503,7 +1513,7 @@ the contributed elements if you need to know which array element gave a
 particular contribution. Additionally, if the contributed elements are
 of a complex data type, you will likely have to supply code for
 serializing/deserializing them. Consider using the PUP interface
-(§ :numref:`sec:pup`) to simplify your object serialization
+(Section :numref:`sec:pup`) to simplify your object serialization
 needs.
 
 If the outcome of your reduction is dependent on the order in which data
@@ -1591,7 +1601,7 @@ one another, related to data and synchronization dependencies.
 Consider one way of expressing these constraints using flags, buffers,
 and counters, as in the following example:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // in .ci file
    chare ComputeObject {
@@ -1661,7 +1671,7 @@ messages in a ``when`` statement, or to do local operations before a
 message is sent or after it’s received. The earlier example can be
 adapted to use serial blocks as follows:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // in .ci file
    chare ComputeObject {
@@ -1715,7 +1725,7 @@ generated-code macro in the class.
 Serial blocks can also specify a textual ‘label’ that will appear in
 traces, as follows:
 
-.. code-block:: c++
+.. code-block:: charmci
 
      entry void firstInput(Input i) {
        serial "process first" {
@@ -1741,7 +1751,7 @@ processed; otherwise, control is returned to the Charm++ scheduler.
 
 The use of ``when`` substantially simplifies the example from above:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // in .ci file
    chare ComputeObject {
@@ -1791,7 +1801,7 @@ For simplicity, ``when`` constructs can also specify multiple expected
 entry methods that all feed into a single body, by separating their
 prototypes with commas:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    entry void startStep() {
      when firstInput(Input first),
@@ -1822,7 +1832,7 @@ denoting the desired reference number in square brackets between the
 entry method name and its parameter list. For parameter marshalled entry
 methods, the reference number expression will be compared for equality
 with the entry method’s first argument. For entry methods that accept an
-explicit message (§ :numref:`messages`), the reference number on the
+explicit message (Section :numref:`messages`), the reference number on the
 message can be set by calling the function
 ``CkSetRefNum(void *msg, CMK_REFNUM_TYPE ref)``. Matching is used in the
 loop example below, and in
@@ -1836,7 +1846,7 @@ they appeared in plain C or C++ code. In the running example,
 start the next step. Instead of this arrangement, the loop structure can
 be made explicit:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // in .ci file
    chare ComputeObject {
@@ -1873,7 +1883,7 @@ be made explicit:
 If this code should instead run for a fixed number of iterations, we can
 instead use a for loop:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // in .ci file
    chare ComputeObject {
@@ -1913,7 +1923,9 @@ instead use a for loop:
 Note that ``int iter;`` is declared in the chare’s class definition and
 not in the ``.ci`` file. This is necessary because the Charm++ interface
 translator does not fully parse the declarations in the ``for`` loop
-header, because of the inherent complexities of C++.
+header, because of the inherent complexities of C++. Finally, there is
+currently no mechanism by which to ``break`` or ``continue`` from an
+SDAG loop.
 
 SDAG also supports conditional execution of statements and blocks with
 ``if`` statements. The syntax of SDAG ``if`` statements matches that of
@@ -1936,7 +1948,7 @@ independently before the call to ``computeInteractions``. Since we don’t
 care which order they get processed in, and want it to happen as soon as
 possible, we can apply ``overlap``:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // in .ci file
    chare ComputeObject {
@@ -2283,7 +2295,7 @@ PUP modes
 ^^^^^^^^^
 
 Charm++ uses your pup method to both pack and unpack, by passing
-different types of PUP::ers to it. The method p.isUnpacking() returns
+different types of PUP::ers to it. The method ``p.isUnpacking()`` returns
 true if your object is being unpacked—that is, your object’s values are
 being restored. Your pup method must work properly in sizing, packing,
 and unpacking modes; and to save and restore properly, the same fields
@@ -2294,20 +2306,39 @@ Three modes are used, with three separate types of PUP::er: sizing,
 which only computes the size of your data without modifying it; packing,
 which reads/saves values out of your data; and unpacking, which
 writes/restores values into your data. You can determine exactly which
-type of PUP::er was passed to you using the p.isSizing(), p.isPacking(),
-and p.isUnpacking() methods. However, sizing and packing should almost
+type of PUP::er was passed to you using the ``p.isSizing()``, ``p.isPacking()``,
+and ``p.isUnpacking()`` methods. However, sizing and packing should almost
 always be handled identically, so most programs should use
-p.isUnpacking() and !p.isUnpacking(). Any program that calls
-p.isPacking() and does not also call p.isSizing() is probably buggy,
+``p.isUnpacking()`` and ``!p.isUnpacking()``. Any program that calls
+``p.isPacking()`` and does not also call ``p.isSizing()`` is probably buggy,
 because sizing and packing must see exactly the same data.
 
-The p.isDeleting() flag indicates the object will be deleted after
+The ``p.isDeleting()`` flag indicates the object will be deleted after
 calling the pup method. This is normally only needed for pup methods
 called via the C or f90 interface, as provided by AMPI or the other
 frameworks. Other Charm++ array elements, marshalled parameters, and
 other C++ interface objects have their destructor called when they are
-deleted, so the p.isDeleting() call is not normally required—instead,
+deleted, so the ``p.isDeleting()`` call is not normally required—instead,
 memory should be deallocated in the destructor as usual.
+
+Separately from indicating if the pup method is being used for sizing,
+packing, or unpacking, the system also provides methods to determine
+the purpose of a pup. The ``p.isCheckpoint()`` and ``p.isMigration()``
+methods let the user determine if the runtime system has invoked the
+pup method for checkpointing (both in-memory and to disk) or for
+PE-to-PE migration (this is most commonly done for load balancing).
+These allow the user to customize their pup functions, for
+example, one may want to minimize checkpoint size by not including
+data that can be reconstructed. Note that these are orthogonal to the
+direction of the pup (e.g. ``p.isCheckpoint()`` will return true both
+when creating a checkpoint and when restoring from a checkpoint; one
+can differentiate between these two cases because when creating a
+checkpoint ``p.isPacking()`` will also return true, while
+``p.isUnpacking()`` will return true when restoring). The runtime
+system guarantees that at most of these will be set. There may be
+cases where neither ``p.isCheckpoint()`` nor ``p.isMigration()``
+return true (e.g. when the system is marshalling entry method
+arguments).
 
 More specialized modes and PUP::ers are described in
 section :numref:`sec:PUP:CommonPUPers`.
@@ -2331,10 +2362,10 @@ Objects can be created in one of two ways: they can be created using a
 normal constructor as usual; or they can be created using their pup
 constructor. The pup constructor for Charm++ array elements and
 PUP::able objects is a “migration constructor” that takes a single
-“CkMigrateMessage \*"; for other objects, such as parameter marshalled
-objects, the pup constructor has no parameters. The pup constructor is
-always followed by a call to the object’s pup method in ``isUnpacking``
-mode.
+“CkMigrateMessage \*" which the user should not free; for other objects,
+such as parameter marshalled objects, the pup constructor has no parameters.
+The pup constructor is always followed by a call to the object’s pup method
+in ``isUnpacking`` mode.
 
 Once objects are created, they respond to regular user methods and
 remote entry methods as usual. At any time, the object pup method can be
@@ -2414,7 +2445,7 @@ parameters must abide by the standard PUP contract (see section
 A simple example of using PUP to marshall user defined data types
 follows:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    class Buffer {
    public:
@@ -2479,10 +2510,12 @@ See ``examples/charm++/PUP/HeapPUP``
 Load Balancing
 --------------
 
-Load balancing in Charm++ is enabled by its ability to place, or
-migrate, chares or chare array elements. Typical application usage to
-exploit this feature will construct many more chares than processors,
-and enable their runtime migration.
+Load balancing in Charm++ is enabled by its ability to place and
+migrate chares (note that only chare array elements are relocatable
+via migration, singleton chares can be created on a particular PE via
+seed balancing to balance load). Typical application usage to exploit
+this feature will construct many more chares than processors, and
+enable their runtime migration.
 
 Iterative applications, which are commonplace in physical simulations,
 are the most suitable target for Charm++’s measurement based load
@@ -2524,151 +2557,337 @@ Examples are in ``examples/charm++/load_balancing`` and
 Measurement-based Object Migration Strategies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In Charm++, objects (except groups, nodegroups) can migrate from
-processor to processor at runtime. Object migration can potentially
-improve the performance of the parallel program by migrating objects
-from overloaded processors to underloaded ones.
+In Charm++, chare array elements can migrate from processor to
+processor at runtime. Object migration can potentially improve the
+performance of the parallel program by migrating objects from
+overloaded processors to underloaded ones.
 
-Charm++ implements a generic, measurement-based load balancing framework
-which automatically instruments all Charm++ objects, collects
-computation load and communication structure during execution and stores
-them into a load balancing database. Charm++ then provides a collection
-of load balancing strategies whose job it is to decide on a new mapping
-of objects to processors based on the information from the database.
-Such measurement based strategies are efficient when we can reasonably
-assume that objects in a Charm++ application tend to exhibit temporal
-correlation in their computation and communication patterns, i.e. future
-can be to some extent predicted using the historical measurement data,
-allowing effective measurement-based load balancing without
-application-specific knowledge.
+Charm++ implements a generic, measurement-based load balancing
+framework which automatically instruments all Charm++ objects,
+collecting computational load and communication structure during
+execution and storing them into a load balancing database (this only
+happens when a load balancer is activated during execution, see
+section :numref:`lbOption`). This instrumentation starts automatically
+at the beginning of application execution by default. It can be
+disabled at startup by passing the *+LBOff* flag at runtime, and
+toggled from the application by calling ``LBTurnInstrumentOn()`` and
+``LBTurnInstrumentOff()``, enabling or disabling instrumentation on
+the calling PE.
+
+Charm++ then provides a collection of load balancing strategies whose
+job it is to decide on a new mapping of objects to processors based on
+the information from the database. Such measurement based strategies
+are efficient when we can reasonably assume that objects in a Charm++
+application tend to exhibit temporal correlation in their computation
+and communication patterns, i.e. that the future can be to some extent
+predicted using the historical measurement data, allowing effective
+measurement-based load balancing without application-specific
+knowledge.
+
+The instrumentation stored in the load balancing database is cleared
+immediately following each time load balancing completes. This means
+that each invocation of load balancing uses only data measured since
+the last invocation, providing adaptive and responsive results even
+for dynamic applications.
 
 Two key terms in the Charm++ load balancing framework are:
 
--  Load balancing database provides the interface of almost all load
-   balancing calls. On each processor, it stores the load balancing
-   instrumented data and coordinates the load balancing manager and
-   balancer. It is implemented as a Chare Group called LBDatabase.
+- The **load balancing manager** provides the interface of almost all
+  load balancing calls. On each processor, it manages the load
+  balancing database, which stores the instrumented load data, and
+  controls and invokes the selected load balancing strategies. It is
+  implemented as a chare group called ``LBManager``.
 
--  Load balancer or strategy takes the load balancing database and
-   produces the new mapping of the objects. In Charm++, it is
-   implemented as Chare Group inherited from BaseLB. Three kinds of
-   schemes are implemented: (a) centralized load balancers, (b) fully
-   distributed load balancers and (c) hierarchical load balancers.
+- A **load balancing strategy** gathers the relevant load data, runs a
+  decision algorithm and produces the new mapping of the
+  objects. Charm++ supports several kinds of strategies:
+
+  a. Configurable, hierarchical load balancers using TreeLB
+  b. Fully distributed load balancers
+  c. *(deprecated)* Centralized load balancers using CentralLB
+  d. *(deprecated)* Hierarchical load balancers using HybridBaseLB
 
 .. _lbStrategy:
 
 Available Load Balancing Strategies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Load balancing can be performed in either a centralized, a fully
-distributed, or an hierarchical fashion.
+TreeLB and its pluggable strategies supersede the previous
+implementations of centralized and hierarchical load balancing. To use
+TreeLB, the user selects one of several trees. Each level corresponds
+to a different division of the overall execution (e.g. PE,
+process). Each level is configurable with a list of strategies,
+frequency, and other parameters. See :numref:`treeLb` below for more
+detail, along with configuration and execution instructions. The
+following strategies can be used with TreeLB (the old runtime
+selection syntax still works and is specified in parentheses, it uses
+the new TreeLB versions with a two level PE_Root tree rooted at PE 0,
+emulating the centralized structure of the old implementation):
 
-In centralized approaches, the entire machine’s load and communication
-structure are accumulated to a single point, typically processor 0,
-followed by a decision making process to determine the new distribution
-of Charm++ objects. Centralized load balancing requires synchronization
-which may incur an overhead and delay. However, due to the fact that the
-decision process has a high degree of the knowledge about the entire
-platform, it tends to be more accurate.
+- **Greedy**: Uses a greedy algorithm that iterates over the objects
+  and assigns the heaviest remaining object to the least loaded
+  processor. (Old: ``+balancer GreedyLB``)
 
-In distributed approaches, load data is only exchanged among neighboring
-processors. There is no global synchronization. However, they will not,
-in general, provide an immediate restoration for load balance - the
-process is iterated until the load balance can be achieved.
+- **GreedyRefine**: Uses a greedy algorithm that assigns the heaviest
+  remaining object to the least loaded processor when it is currently
+  assigned to a heavily loaded processor, otherwise leaves the object
+  on its current processor to limit migrations. It takes an optional
+  argument ``tolerance`` via the configuration file, which specifies
+  the tolerance it should allow above the maximum load Greedy would
+  produce (e.g. ``1.1`` allows the maximum load to be 10% higher than
+  Greedy's max load). (Old: ``+balancer GreedyRefineLB``)
 
-In hierarchical approaches, processors are divided into independent
-autonomous sets of processor groups and these groups are organized in
-hierarchies, thereby decentralizing the load balancing task. Different
-strategies can be used to balance the load on processors inside each
-processor group, and processors across groups in a hierarchical fashion.
+- **RefineA, RefineB**: Moves objects away from the most overloaded
+  processors to reach average, limits the number of objects
+  migrated. RefineA allows a heavy object to go to any of the lightly
+  loaded PEs, while RefineB always moves the heaviest remaining object
+  to the lightest loaded PE. (Old: ``+balancer RefineLB`` runs RefineA)
 
-Listed below are some of the available non-trivial centralized load
-balancers and their brief descriptions:
+Listed below are load balancers intended for diagnostic purposes:
 
--  **GreedyLB**: Uses a greedy algorithm that always assigns the
-   heaviest object to the least loaded processor.
+- **Dummy**: Does nothing, does not move objects at all. (Old:
+  ``+balancer DummyLB``)
 
--  **GreedyRefineLB**: Uses a greedy algorithm that assigns the heaviest
-   object to the least loaded processor when the benefit outweighs the
-   migration cost, otherwise leaves the object on its current processor.
-   It takes an optional command-line argument *+LBPercentMoves*,which
-   specifies the percentage of migrations that can be tolerated.
+- **Random**: Randomly assigns objects to processors. (Old:
+  ``+balancer RandCentLB``)
 
--  **TopoCentLB**: Extends the greedy algorithm to take processor
-   topology into account.
+- **Rotate**: Moves objects to the next available PE every time it is
+  called. It is useful for debugging PUP routines and other migration
+  related bugs. (Old: ``+balancer RotateLB``)
 
--  **RefineLB**: Moves objects away from the most overloaded processors
-   to reach average, limits the number of objects migrated.
+The following centralized communication-aware load balancers do not
+yet use TreeLB, but continue to be available using the old CentralLB
+infrastructure:
 
--  **RefineSwapLB**: Moves objects away from the most overloaded
-   processors to reach average. In case it cannot migrate an object from
-   an overloaded processor to an underloaded processor, it swaps objects
-   to reduce the load on the overloaded processor. This strategy limits
-   the number of objects migrated.
+- **RecBipartLB**: Uses recursive bipartitioning to partition the
+  object communication graph. (``+balancer RecBipartLB``)
 
--  **RefineTopoLB**: Same idea as in RefineLB, but takes processor
-   topology into account.
+- **MetisLB**: Uses `METIS
+  <http://glaros.dtc.umn.edu/gkhome/metis/metis/overview>`__ to
+  partition the object communication graph. METIS is distributed with
+  Charm++, so there is no need to separately get this
+  dependence. (``+balancer MetisLB``)
 
--  **BlockLB**: This strategy does a blocked distribution of objects to
-   processors.
+- **ScotchLB**: Uses the `SCOTCH
+  <http://www.labri.fr/perso/pelegrin/scotch/>`__ library for
+  partitioning the object communication graph, while also taking
+  object load imbalance into account. SCOTCH is not distributed with
+  Charm++, so end users must download and build the library from the
+  above link in order to use this load balancer. Because of this
+  dependence, ScotchLB is not built by default; it can be built by
+  running ``make ScotchLB`` in the Charm++ build folder
+  (e.g. ``netlrts-linux-x86_64-smp/``). If SCOTCH is installed in a
+  non-standard location, use the *-incdir* and *-libdir* build time
+  options to point to the include and library directories used,
+  respectively. (``+balancer ScotchLB``)
 
--  **ComboCentLB**: A special load balancer that can be used to combine
-   any number of centralized load balancers mentioned above.
-
-Listed below are some of the communication-aware load balancers:
-
--  **MetisLB**: Uses `METIS <http://glaros.dtc.umn.edu/gkhome/metis/metis/overview>`__
-   to partition the object communication graph.
-
--  **ScotchLB**: Uses the `SCOTCH <http://www.labri.fr/perso/pelegrin/scotch/>`__
-   library for partitioning the object
-   communication graph, while also taking object load imbalance into
-   account.
-
--  **GreedyCommLB**: Extends the greedy algorithm to take the
-   communication graph into account.
-
--  **RefineCommLB**: Same idea as in RefineLB, but takes communication
-   into account.
+In distributed approaches, the strategy executes across multiple PEs,
+providing scalable computational and communication performance.
 
 Listed below are the distributed load balancers:
 
--  **NeighborLB**: A neighborhood load balancer in which each processor
-   tries to average out its load only among its neighbors.
+- **DistributedLB**: A load balancer which uses partial information
+  about underloaded and overloaded processors in the system to do
+  probabilistic transfer of load. This is a refinement based
+  strategy. (``+balancer DistributedLB``)
 
--  **WSLB**: A load balancer for workstation clusters, which can detect
-   load changes on desktops (and other timeshared processors) and adjust
-   load without interfering with other’s use of the desktop.
+Custom strategies should be built using TreeLB or DistBaseLB (the base
+class for DistributedLB). Custom strategies that are based on
+CentralLB or HybridBaseLB will continue to be supported for now, but
+support for these will likely be dropped in a future release.
 
--  **DistributedLB**: A load balancer which uses partial information
-   about underloaded and overloaded processors in the system to do
-   probabilistic transfer of load. This is a refinement based strategy.
-
-An example of a hierarchical strategy can be found in:
-
--  **HybridLB**: This calls GreedyLB at the lower level and RefineLB at
-   the root.
-
-Listed below are load balancers for debugging purposes:
-
--  **RandCentLB**: Randomly assigns objects to processors;
-
--  **RotateLB**: This strategy moves objects to the next available PE
-   every time it is called. It is useful for debugging PUP routines and
-   other migration related bugs.
+All built-in load balancers that do not require external dependencies
+(that is, all of the above load balancers except for ScotchLB) are
+built by default. To use load balancing, users must link a load
+balancing module with their application and pass the appropriate
+runtime flags. See :numref:`lbOption` for details on how to
+use load balancing.
 
 Users can choose any load balancing strategy they think is appropriate
-for their application. We recommend using GreedyRefineLB with
+for their application. We recommend using TreeLB with GreedyRefine for
 applications in general. For applications where the cost of migrating
 objects is very high, say, due to frequent load balancing to handle
-frequent load changes or due to size of data in the object being large,
-a strategy which favors migration minimization at the cost of balance
-(eg: RefineLB) is more suitable. DistributedLB and HybridLB are suitable
-for large number of nodes. Communication-aware load balancers like
-MetisLB and ScotchLB are suitable for communication intensive
-applications. RotateLB and RandCentLB are more useful for debugging
-object migrations. The compiler and runtime options are described in
+frequent load changes or due to size of data in the object being
+large, a strategy which favors migration minimization at the cost of
+balance (eg: RefineLB) is more suitable. DistributedLB is suitable for
+a large number of nodes. Communication-aware load balancers like
+MetisLB and RecBipartLB are suitable for communication intensive
+applications. The compiler and runtime options are described in
 section :numref:`lbOption`.
+
+.. _treeLb:
+
+TreeLB and its Configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+TreeLB allows for user-configurable hierarchical load balancing. While
+the legacy centralized strategies above are still supported, TreeLB
+allows load balancing to be performed at different levels and
+frequencies in a modular way. TreeLB includes several kinds of trees:
+the 2-level tree consists of PE and root levels (essentially the same
+as centralized load balancing), the 3-level tree consists of PE,
+process, and root levels, and the 4-level tree consists of PE,
+process, process group, and root levels (process groups are
+collections of consecutive processes; the number of groups is
+configurable, see below). Each level only balances load within its
+corresponding domain; for example, for the 3-level PE-Process-Root
+tree: during process steps, each process runs the specified LB
+strategy over only the PEs and objects contained within the process,
+while, at root steps, the root strategy is run over all PEs and
+objects in the job. Supposing the root step frequency is 3, the root
+strategy is GreedyRefine, and the process strategy is Greedy, LB would
+proceed as follows:
+
+=======    ===================================================
+LB Step    LB Action
+=======    ===================================================
+0          Each process runs Greedy over its own PEs
+1          Each process runs Greedy over its own PEs
+2          Root PE runs GreedyRefine over all PEs
+3          Each process runs Greedy over its own PEs
+...        ...
+=======    ===================================================
+
+The load balancing strategy to be used at each level and frequency at
+which to invoke LB at each level can be specified using a JSON
+configuration file with name ``treelb.json`` or by specifying the JSON
+file name using command line option ``+TreeLBFile``. We provide
+examples of some configuration files below:
+
+Creating a 2-level tree that first uses the Greedy strategy and then
+the GreedyRefine strategy at the root:
+
+.. code-block:: json
+
+  {
+    "tree": "PE_Root",
+    "root":
+    {
+        "pe": 0,
+        "strategies": ["Greedy", "GreedyRefine"]
+    }
+  }
+
+Creating a 3-level tree that uses the Greedy strategy at the process level
+and the GreedyRefine strategy at the root, which runs only every three
+steps:
+
+.. code-block:: json
+
+  {
+    "tree": "PE_Process_Root",
+    "root":
+    {
+        "pe": 0,
+        "step_freq": 3,
+        "strategies": ["GreedyRefine"]
+    },
+    "process":
+    {
+        "strategies": ["Greedy"]
+    }
+  }
+
+Creating a 4-level tree that uses the GreedyRefine strategy at the
+process and process group levels. The number of user-specified process
+groups is four in this example. A strategy is not allowed at root
+level for a 4-level tree since communicating all object load
+information to the root can be expensive given the size of the PE
+tree. Instead, a scheme where coarsened representations of the
+subtrees exchange load tokens is used at the root level. Load is
+balanced at the process group level every five steps and at the root
+level every ten steps. Note also that the process group usage of
+GreedyRefine provides a custom parameter to the strategy. This
+parameter will only be used for the process group level version of
+GreedyRefine, not the process level version.
+
+.. code-block:: json
+
+  {
+    "tree": "PE_Process_ProcessGroup_Root",
+    "root":
+    {
+        "pe": 0,
+        "step_freq": 10
+    },
+    "processgroup":
+    {
+        "step_freq": 5,
+        "strategies": ["GreedyRefine"],
+        "num_groups": 4,
+        "GreedyRefine":
+        {
+            "tolerance": 1.03
+        }
+    },
+    "process":
+    {
+        "strategies": ["GreedyRefine"]
+    }
+  }
+
+**TreeLB Configuration Parameters**
+
+The following parameters may be used to specify the configuration of TreeLB:
+
+- ``tree`` (**required**): String specifying the tree to use. Can be one of "PE_Root",
+  "PE_Process_Root", or "PE_Process_ProcessGroup_Root".
+- ``root`` (**required**): The configuration block for the root level of the
+  tree.
+
+  - ``pe``: Integer specifying the root PE. (default = ``0``)
+  - ``token_passing`` : Boolean specifying whether to use the coarsened
+    token passing strategy or not, only allowed for the "PE_Process_ProcessGroup_Root"
+    tree. If false, load will only be balanced within process groups
+    at most, never across the whole job. (default = ``true``)
+
+- ``processgroup`` (**required** for "PE_Process_ProcessGroup_Root" tree): The configuration block for
+  the process group level of the tree.
+
+  - ``num_groups`` (**required**): Integer specifying the number of process
+    groups to create.
+
+- ``process`` (**required** for "PE_Process_Root" and
+  "PE_Process_ProcessGroup_Root" trees): The configuration block for
+  the process level of the tree.
+- ``mcast_bfactor``: 8-bit integer specifying the branching factor of
+  the communication tree used to send inter-subtree migrations for the
+  4-level tree's token passing scheme. (default = ``4``)
+
+The ``root``, ``processgroup``, and ``process`` blocks may include the
+following tree level configuration parameters:
+
+- ``strategies`` (**required** except for root level of
+  "PE_Process_ProcessGroup_Root" tree): List of strings specifying which
+  LB  strategies to run at the given level.
+- ``repeat_strategies``: Boolean specifying if the whole list of
+  strategies should be repeated or not. If true, start back at the
+  beginning when the end of ``strategies`` is reached, otherwise keep
+  repeating the last strategy (e.g. for ``"strategies": ["1", "2"]``,
+  ``true`` would result in 1, 2, 1, 2, ...; ``false`` in 1, 2, 2, 2, ...).
+  (default = ``false``)
+- ``step_freq``: Integer specifying frequency at which to balance at the given
+  level of the tree. Not allowed to be specified on the level
+  immediately above the PE level of the tree, which implicitly has a
+  value of 1. This value must be a multiple of the value for the level
+  below it. For example, for the 4-level tree, this can be specified
+  for the process group and root levels, and the value for the root
+  level must be a multiple of the process group value. If these values
+  are given as 2 and 4, respectively, then load balancing will be
+  performed at the following levels in sequence: process, process
+  group, process, root, process, and so on. (default = max(value of
+  the level below, ``1``))
+- Individual strategies can also be configured using parameters in
+  this file. These should be placed in a block with a key exactly
+  matching the name of the load balancer, and can be parsed from
+  within the strategy's constructor.
+
+  - ``GreedyRefine``:
+
+    - ``tolerance``: Float specifying the tolerance GreedyRefine
+      should allow above the maximum load of Greedy, e.g. ``1.1``
+      allows the maximum load to be 10% higher than Greedy's max load.
+      (default = ``1``)
 
 **Metabalancer to automatically schedule load balancing**
 
@@ -2688,13 +2907,13 @@ to collect load statistics.
 Metabalancer feature to automatically decide which load balancing
 strategy to invoke. A model trained on a generic representative load
 imbalance benchmark can be found in ``charm/src/ck-ldb/rf_model``.
-Metabalancer makes a decision on which load balancing strategy to invoke
-out of a subset of strategies, namely GreedyLB, RefineLB, HybridLB,
-DistributedLB, MetisLB and ScotchLB. For using the model based
-prediction in Metabalancer, Charm++ needs to be built with all the above
-load balancing strategies, including ScotchLB that relies on the
-external partitioning library SCOTCH specified in the
-Section :numref:`lbOption`.
+Metabalancer makes a decision on which load balancing strategy to
+invoke out of a subset of strategies, namely GreedyLB, RefineLB,
+HybridLB, DistributedLB, MetisLB and ScotchLB. For using the model
+based prediction in Metabalancer, Charm++ needs to be built with all
+the above load balancing strategies, including ScotchLB, which relies
+on the external graph partitioning library SCOTCH specified in Section
+:numref:`lbStrategy`.
 
 .. _lbarray:
 
@@ -2711,96 +2930,97 @@ elements migratable (see migration section above) and choose a load
 balancing strategy (see the section :numref:`lbStrategy` for a
 description of available load balancing strategies).
 
-There are three different ways to use load balancing for chare arrays to
-meet different needs of the applications. These methods are different in
-how and when a load balancing phase starts. The three methods are:
-**periodic load balancing mode**, **at sync mode** and **manual mode**.
+There are two different ways to use load balancing for chare arrays to
+meet different needs of the applications. These methods are different
+in how and when a load balancing phase starts. The two methods are:
+**AtSync mode** and **periodic load balancing mode**.  In *AtSync
+mode*, the application invokes the load balancer explicitly at an
+appropriate location (generally at a pre-existing synchronization
+boundary) to trigger load balancing by inserting a function call
+(``AtSync()``) in the application source code.  In *periodic load
+balancing mode*, a user specifies only how often load balancing is to
+occur, using the *+LBPeriod* runtime parameter or the
+``LBManager::SetLBPeriod(double period)`` call to specify the time
+interval.
 
-In *periodic load balancing mode*, a user specifies only how often load
-balancing is to occur, using +LBPeriod runtime option to specify the
-time interval.
+The detailed APIs of these two methods are described as follows:
 
-In *at sync mode*, the application invokes the load balancer explicitly
-at appropriate (generally at a pre-existing synchronization boundary) to
-trigger load balancing by inserting a function call (AtSync) in the
-application source code.
+#. **AtSync mode**: Using this method, load balancing is triggered
+   only at certain points in the execution, when the application
+   invokes ``AtSync()``, which is essentially a non-blocking
+   barrier. In order to use AtSync mode, one should set the variable
+   ``usesAtSync`` to true in the constructors of chare array elements
+   that are participating in the AtSync barrier. When an element is
+   ready to start load balancing, it calls ``AtSync()`` [6]_. When all
+   local elements that have set ``usesAtSync`` to true call
+   ``AtSync()``, the load balancer is triggered. (Note that when the
+   load balancer is triggered, it is triggered for all array elements,
+   even those without ``usesAtSync`` set to true. If they are
+   migratable, then they should have PUP routines suitable for anytime
+   migration.) Once all local migrations (both in and out) are
+   completed, the load balancer calls the virtual function
+   ``ResumeFromSync()`` on each of the local array elements
+   participating in the AtSync barrier. This function is usually
+   overridden by the application to trigger the resumption of
+   execution.
 
-In the prior two load balancing modes, users do not need to worry about
-how to start load balancing. However, in one scenario, those automatic
-load balancers will fail to work - when array elements are created by
-dynamic insertion. This is because the above two load balancing modes
-require an application to have fixed the number of objects at the time
-of load balancing. The array manager needs to maintain a head count of
-local array elements for the local barrier. In this case, the
-application must use the *manual mode* to trigger load balancer.
-
-The detailed APIs of these three methods are described as follows:
-
-#. **Periodical load balancing mode**: In the default setting, load
-   balancing happens whenever the array elements are ready, with an
-   interval of 1 second. It is desirable for the application to set a
-   larger interval using +LBPeriod runtime option. For example
-   “+LBPeriod 5.0” can be used to start load balancing roughly every 5
-   seconds. By default, array elements may be asked to migrate at any
-   time, provided that they are not in the middle of executing an entry
-   method. The array element’s variable usesAtSync being false
-   attributes to this default behavior.
-
-#. **At sync mode**: Using this method, elements can be migrated only at
-   certain points in the execution when the application invokes
-   AtSync(). In order to use the at sync mode, one should set usesAtSync
-   to true in the array element constructor. When an element is ready to
-   migrate, call AtSync()  [6]_. When all local elements call AtSync,
-   the load balancer is triggered. Once all migrations are completed,
-   the load balancer calls the virtual function
-   ArrayElement::ResumeFromSync() on each of the array elements. This
-   function can be redefined in the application.
-
-   Note that the minimum time for AtSync() load balancing to occur is
-   controlled by the LBPeriod. Unusually high frequency load balancing
-   (more frequent than 500ms) will perform better if this value is set
-   via +LBPeriod or SetLBPeriod() to a number shorter than your load
-   balancing interval.
-
-   Note that *AtSync()* is not a blocking call, it just gives a hint to
-   load balancing that it is time for load balancing. During the time
-   between *AtSync* and *ResumeFromSync*, the object may be migrated.
-   One can choose to let objects continue working with incoming
-   messages, however keep in mind the object may suddenly show up in
-   another processor and make sure no operations that could possibly
-   prevent migration be performed. This is the automatic way of doing
-   load balancing where the application does not need to define
-   ResumeFromSync().
+   Note that ``AtSync()`` is not a blocking call. The object may be
+   migrated during the time between ``AtSync()`` and
+   ``ResumeFromSync()``. One can choose to let objects continue
+   working with incoming messages; however, keep in mind the object
+   may suddenly show up in another processor, so make sure no
+   operations that could possibly prevent migration be performed. This
+   is the automatic way of doing load balancing where the application
+   does not need to define ``ResumeFromSync()``.
 
    The more commonly used approach is to force the object to be idle
-   until load balancing finishes. The user places an AtSync call at the
-   end of some iteration and when all elements reach that call load
-   balancing is triggered. The objects can start executing again when
-   ResumeFromSync() is called. In this case, the user redefines
-   ResumeFromSync() to trigger the next iteration of the application.
-   This manual way of using the at sync mode results in a barrier at
-   load balancing (see example here :numref:`lbexample`).
+   until load balancing finishes. The user calls ``AtSync()`` at the
+   end of some iteration, then, when all participating elements reach
+   that call, load balancing is triggered. The objects can start
+   executing again when ``ResumeFromSync()`` is called. In this case,
+   the user redefines ``ResumeFromSync()`` to trigger the next
+   iteration of the application. This pattern effectively results in a
+   barrier at load balancing time (see example here
+   :numref:`lbexample`).
 
-#. **Manual mode**: The load balancer can be programmed to be started
-   manually. To switch to the manual mode, the application calls
-   *TurnManualLBOn()* on every processor to prevent the load balancer
-   from starting automatically. *TurnManualLBOn()* should be called as
-   early as possible in the program. It could be called at the
-   initialization part of the program, for example from a global
-   variable constructor, or in an initproc call
-   (Section :numref:`initproc`). It can also be called in the
-   constructor of a static array or before the *doneInserting* call for
-   a dynamic array. It can be called multiple times on one processor,
-   but only the last one takes effect.
+   .. note:: In AtSync mode, Applications that use dynamic insertion or
+	     deletion of array elements must not be doing so when any element
+	     calls ``AtSync()``. This is because AtSync mode requires an
+	     application to have a fixed, known number of objects when
+	     determining if ``AtSync()`` has been called by all relevant objects
+	     in order to prevent race conditions (the implementation is designed
+	     to be robust against these issues and will often be able to handle
+	     them, but we make no guarantees if these rules are not obeyed). If
+	     using dynamic insertion, please ensure that insertions and calls to
+	     ``AtSync()`` cannot be interleaved and that ``doneInserting()`` is
+	     called after insertions are complete and before any element calls
+	     ``AtSync()``. Insertions and/or deletions may begin again after
+	     load balancing is complete (i.e. ``ResumeFromSync()`` is called for
+	     an object on the given PE for insertions or for the object in
+	     question for deletions).
 
-   The function call *CkStartLB()* starts load balancing immediately.
-   This call should be made at only one place on only one processor.
-   This function is not blocking, the object will continue to process
-   messages and the load balancing, when triggered, happens in the
-   background.
+#. **Periodic load balancing mode**: This mode uses a timer to perform
+   load balancing periodically at a user-specified interval. In order
+   to use this mode, the user must either provide the *+LBPeriod
+   {period}* runtime option or set the period from the application
+   using ``LBManager::SetLBPeriod(double period)`` on every PE, the
+   *period* argument specifying the minimum time between consecutive
+   LB invocations in seconds in both cases. For example, *+LBPeriod
+   10.5* can be used to invoke load balancing roughly every 10.5
+   seconds. Additionally, no array element can have ``usesAtSync`` set
+   to true. In this mode, array elements may be asked to migrate at
+   any time, provided that they are not in the middle of executing an
+   entry method. Thus, the PUP routines for array elements must
+   migrate all data needed to reconstruct the object at any point in
+   its lifecycle (as opposed to AtSync mode, where PUP routines for
+   load balancing migration are only called after ``AtSync()`` and
+   before ``ResumeFromSync()``, so they can make some assumptions
+   about state).
 
-   *TurnManualLBOff()* turns off manual load balancing and switches back
-   to the automatic load balancing mode.
+   .. note:: Dynamic insertion works with periodic load balancing with
+	     no issues. However, dynamic deletion does not, since
+	     deletion may occur while the load balancing strategy is
+	     running.
 
 .. _lbmigobj:
 
@@ -2865,127 +3085,94 @@ to configure the load balancer, etc. These functions are:
    to tell the load balancer whether this object is migratable or
    not [7]_.
 
--  **LBSetPeriod(double s)**: this function can be called anywhere (even
-   in Charm++ initnodes or initprocs) to specify the load balancing
-   period time in seconds. It tells load balancer not to start next load
-   balancing in less than :math:`s` seconds. This can be used to prevent
-   load balancing from occurring too often in *automatic without sync
-   mode*. Here is how to use it:
+-  **double LBManager::GetLBPeriod()**: returns the current load
+   balancing period when using *periodic load balancing mode*. Returns
+   -1.0 when no period is set or when using a different LB mode.
+
+-  **LBManager::SetLBPeriod(double s)**: The **SetLBPeriod** function
+   can be called anywhere (even in Charm++ initnodes or initprocs) to
+   change the load balancing period time when using *periodic load
+   balancing mode*. It tells the load balancer to use the given period
+   :math:`s` as the new minimum time between load balancing
+   invocations. It may take up to one full cycle of load balancing
+   before the new period comes into effect (so up to the the period
+   after the next load balancing invocation completes). This call
+   should be made at least once on every PE when setting the
+   period. If no elements have ``usesAtSync`` set to true and no LB
+   period was set on the command line, this call will also enable
+   *periodic load balancing mode*. Here is how to use it:
 
    .. code-block:: c++
 
-      // if used in an array element
-      LBDatabase *lbdb = getLBDB();
-      lbdb->SetLBPeriod(5.0);
+      // if used in an array element:
+      LBManager* lbmgr = getLBMgr();
+      lbmgr->SetLBPeriod(5.0);
 
-      // if used outside of an array element
-      LBSetPeriod(5.0);
-
-   Alternatively, one can specify +LBPeriod {seconds} at command line.
+      // If used outside an array element, since it's a static member function:
+      LBManager::SetLBPeriod(5.0);
 
 .. _lbOption:
 
-Compiler and runtime options to use load balancing module
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Compiler and runtime options to use load balancing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Load balancing strategies are implemented as libraries in Charm++. This
 allows programmers to easily experiment with different existing
 strategies by simply linking a pool of strategy modules and choosing one
 to use at runtime via a command line option.
 
-**Note:** linking a load balancing module is different from activating
+**Note:** linking a load balancing module is distinct from activating
 it:
 
--  link an LB module: is to link a Load Balancer module(library) at
-   compile time. You can link against multiple LB libraries as
-   candidates.
+  - link an LB module: to link an load balancing module (library) at
+    compile time. You can link against multiple LB libraries.
 
--  activate an LB: is to actually ask the runtime to create an LB
-   strategy and start it. You can only activate load balancers that have
-   been linked at compile time.
+  - activate an LB: to actually ask the runtime to create an LB
+    strategy and use it for a given run. You can only activate load
+    balancers that have been already been linked in at compile
+    time. The special ``-balancer {balancer name}`` link time argument
+    both links a module and activates it at runtime by default.
 
 Below are the descriptions about the compiler and runtime options:
 
-#. **compile time options:**
+#. **Compile time options:** (to ``charmc``)
 
-   -  | *-module NeighborLB -module GreedyCommLB ...*
-      | links the modules NeighborLB, GreedyCommLB etc into an
-        application, but these load balancers will remain inactive at
-        execution time unless overridden by other runtime options.
+   - | *-module TreeLB -module RecBipartLB ...*
+     | links the listed LB modules into an application, which can then
+       be used at runtime via the ``+balancer`` option.
 
-   -  | *-module CommonLBs*
-      | links a special module CommonLBs which includes some commonly
-        used Charm++ built-in load balancers. The commonly used load
-        balancers include: *DummyLB, GreedyLB, GreedyRefineLB, CommLB, RandCentLB, RefineLB, RefineCommLB, RotateLB, DistributedLB, HybridLB, ComboCentLB, RefineSwapLB, NeighborLB, OrbLB, BlockLB, GreedyCommLB*
+   - | *-module CommonLBs*
+     | links a special module CommonLBs which includes some commonly
+       used Charm++ built-in load balancers. This set includes the
+       following commonly used load balancers: *TreeLB (usable with
+       Greedy, GreedyRefine, RefineA, RefineB, Dummy, Random, and
+       Rotate) and DistributedLB*.
 
-   -  | *-balancer GreedyCommLB*
-      | links the load balancer GreedyCommLB and invokes it at runtime.
+   - | *-module EveryLB*
+     | links a special module EveryLB which includes all Charm++ load
+       balancers built by default. This set includes everything
+       specified in CommonLBs plus *MetisLB and RecBipartLB*.
 
-   -  | *-balancer GreedyCommLB -balancer RefineLB*
-      | invokes GreedyCommLB at the first load balancing step and
-        RefineLB in all subsequent load balancing steps.
+   - | *-balancer MetisLB*
+     | links the given load balancer *and activates* it for use at
+       runtime. This is equivalent to using *-module MetisLB* at
+       compile time and then *+balancer MetisLB* at runtime.
 
-   -  | *-balancer ComboCentLB:GreedyLB,RefineLB*
-      | You can create a new combination load balancer made of multiple
-        load balancers. In the above example, GreedyLB and RefineLB
-        strategies are applied one after the other in each load
-        balancing step.
+   - | *-balancer GreedyLB -balancer RefineLB*
+     | links both listed balancers, then invokes GreedyLB at the first
+       load balancing step and RefineLB in all subsequent load
+       balancing steps.
 
    The list of existing load balancers is given in Section
-   :numref:`lbStrategy`. Note: you can have multiple -module \*LB
+   :numref:`lbStrategy`. Note: you can have multiple *-module \*LB*
    options. LB modules are linked into a program, but they are not
-   activated automatically at runtime. Using -balancer A at compile time
+   activated automatically at runtime. Using *-balancer A* at compile time
    will activate load balancer A automatically at runtime. Having
-   -balancer A implies -module A, so you don’t have to write -module A
+   *-balancer A* implies *-module A*, so you don’t have to write *-module A*
    again, although that is not invalid. Using CommonLBs is a convenient
    way to link against the commonly used existing load balancers.
 
-   The SCOTCH-based load balancer(s) use an external partitioning
-   library requiring 3rd party software:
-
-   SCOTCH can be downloaded from:
-   http://www.labri.fr/perso/pelegrin/scotch/
-
-   Use the *-incdir and -libdir* build time option to add your
-   installation of any third party libraries you wish to use to the
-   Charm++ search paths.
-
-#. **Building individual load balancers**
-
-   Load balancers can be built individually by changing the current
-   working directory to the *tmp* subdirectory of your build and making
-   them by name.
-
-   .. code-block:: bash
-
-      $ cd netlrts-linux-x86_64/tmp
-      $ make PhasebyArrayLB
-
-#. **Write and use your own load balancer**
-
-   Refer Section :numref:`lbWriteNewLB` for writing a new load
-   balancer. Compile it in the form of library and name it
-   *libmoduleFooLB.a* where *FooLB* is the new load balancer. Add the
-   path to the library and link the load balancer into an application
-   using *-module FooLB*.
-
-   You can create a library by modifying the Makefile in the following
-   way. This will create *libmoduleFooLB.a*.
-
-   .. code-block:: makefile
-
-      libmoduleFooLB.a: FooLB.o
-        $(CHARMC) -o libmoduleFooLB.a FooLB.o
-
-   To include this balancer in your application, the Makefile can be
-   changed in the following way
-
-   .. code-block:: makefile
-
-      $(TARGET): $(OBJECTS)
-        $(CHARMC) -o $(TARGET) -L/path-to-the-lib $(OBJS) -module FooLB
-
-#. **runtime options:**
+#. **Runtime options:**
 
    Runtime balancer selection options are similar to the compile time
    options as described above, but they can be used to override those
@@ -2994,51 +3181,41 @@ Below are the descriptions about the compiler and runtime options:
    -  | *+balancer help*
       | displays all available balancers that have been linked in.
 
-   -  | *+balancer GreedyCommLB*
-      | invokes GreedyCommLB
+   -  | *+balancer DistributedLB*
+      | invokes DistributedLB
 
-   -  | *+balancer GreedyCommLB +balancer RefineLB*
-      | invokes GreedyCommLB at the first load balancing step and
+   -  | *+balancer GreedyLB +balancer RefineLB*
+      | invokes GreedyLB at the first load balancing step and
         RefineLB in all subsequent load balancing steps.
 
-   -  | *+balancer ComboCentLB:GreedyLB,RefineLB*
-      | same as the example in the -balancer compile time option.
-
-   Note: +balancer option works only if you have already linked the
-   corresponding load balancers module at compile time. Giving +balancer
-   with a wrong LB name will result in a runtime error. When you have
-   used -balancer A as compile time option, you do not need to use
-   +balancer A again to activate it at runtime. However, you can use
-   +balancer B to override the compile time option and choose to
-   activate B instead of A.
-
-#. **Handling the case that no load balancer is activated by users**
-
-   When no balancer is linked by users, but the program counts on a load
-   balancer because it used *AtSync()* and expect *ResumeFromSync()* to
-   be called to continue, a special load balancer called *NullLB* will
-   be automatically created to run the program. This default load
-   balancer calls *ResumeFromSync()* after *AtSync()*. It keeps a
-   program from hanging after calling *AtSync()*. *NullLB* will be
-   suppressed if another load balancer is created.
+   Note: The *+balancer* option works only if you have already linked
+   the corresponding load balancer module at compile time. Providing
+   *+balancer* with an invalid LB name will result in a runtime
+   error. When you have used *-balancer A* rather than *-module A* as
+   a compile time option, you do not need to use *+balancer A* again
+   to activate it at runtime. However, you can use *+balancer B* to
+   override the compile time option and choose to activate B instead
+   of A (assuming that B was also linked into the application).
 
 #. **Other useful runtime options**
 
    There are a few other runtime options for load balancing that may be
    useful:
 
-   -  | *+LBDebug {verbose level}*
-      | {verbose level} can be any positive integer number. 0 is to turn
-        off the verbose. This option asks load balancer to output load
-        balancing information to stdout. The bigger the verbose level
-        is, the more verbose the output is.
-
    -  | *+LBPeriod {seconds}*
-      | {Seconds} can be any float number. This option sets the minimum
-        period time in seconds between two consecutive load balancing
-        steps. The default value is 1 second. That is to say that a load
-        balancing step will not happen until 1 second after the last
-        load balancing step.
+      | When not using AtSync mode (meaning no chare array element in
+        the application has ``usesAtSync`` set to true), this option
+	enables *periodic load balancing mode*. The argument {seconds}
+	specifies the interval for invoking load balancing in seconds;
+	it can be any floating point number. Note that this sets the
+	*minimum period* between two consecutive load balancing steps.
+
+   -  | *+LBDebug {verbose level}*
+      | {verbose level} can be any non-negative integer. 0 is
+        equivalent to not passing this flag at all. When active, the
+	load balancer will output load balancing information to stdout
+	when it runs. The bigger {verbose level} is, the more verbose
+	the output (the number of levels varies by load balancer).
 
    -  | *+LBSameCpus*
       | This option simply tells load balancer that all processors are
@@ -3137,7 +3314,7 @@ Simple Load Balancer Usage Example - Automatic with Sync LB
 A simple example of how to use a load balancer in sync mode in one’s
 application is presented below.
 
-.. code-block:: c++
+.. code-block:: charmci
 
    /*** lbexample.ci ***/
    mainmodule lbexample {
@@ -3357,6 +3534,21 @@ on all branches of the group. This call is also asynchronous and
 non-blocking, and it, too, returns immediately after sending the
 message.
 
+Finally, when running in SMP mode with multiple PEs per node, one can
+broadcast a message to the branches of a group local to the sending node:
+
+.. code-block:: c++
+
+   CkWithinNodeBroadcast(CkIndex_Foo::bar(), msg, fooProxy);
+
+Where ``CkIndex_Foo::bar()`` is the index of the entry method you wish to
+invoke, msg is the ``Charm++`` message (section :numref:`messages`) you wish to
+send, and ``fooProxy`` is the proxy to the group you wish to send. As before,
+it is an asynchrounous call which returns immediately. Furthermore, if the
+receiving entry method is marked as ``[nokeep]`` (:numref:`attributes`), the
+message pointer will be shared with each group chare instead of creating an
+independent copy per receiver.
+
 Recall that each PE hosts a branch of every instantiated group.
 Sequential objects, chares and other groups can gain access to this
 *PE-local* branch using ckLocalBranch():
@@ -3457,7 +3649,7 @@ particular branch of a nodegroup, it may be executed by *any* PE in that
 logical node. Thus two invocations of a single entry method on a
 particular branch of a NodeGroup may be executed *concurrently* by two
 different PEs in the logical node. If this could cause data races in
-your program, please consult § :numref:`sec:nodegroups/exclusive`
+your program, please consult Section :numref:`sec:nodegroups/exclusive`
 (below).
 
 .. _sec:nodegroups/exclusive:
@@ -3476,7 +3668,7 @@ PE within that logical node will execute any other *exclusive* methods.
 However, PEs in the logical node may still execute *non-exclusive* entry
 method invocations. An entry method can be marked exclusive by tagging
 it with the exclusive attribute, as explained in
-§ :numref:`attributes`.
+Section :numref:`attributes`.
 
 Accessing the Local Branch of a NodeGroup
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -3508,7 +3700,7 @@ the routine exactly once on *every logical node* before the computation
 begins, or to declare a regular C++ subroutine initproc to be executed
 exactly once on *every PE*.
 
-.. code-block:: c++
+.. code-block:: charmci
 
    module foo {
        initnode void fooNodeInit(void);
@@ -3563,7 +3755,7 @@ sequence:
    However, if your program structure requires it, you can explicitly
    specify that the creation of certain Groups/NodeGroups depends on the
    creation of others, as described in
-   § :numref:`sec:groups/creation`. In addition, since those
+   Section :numref:`sec:groups/creation`. In addition, since those
    objects are initialized after the initialization of readonly
    variables, readonly variables can be used in the constructors of
    Groups and NodeGroups.
@@ -3621,12 +3813,12 @@ should *not* reuse the buffer. That is, after you have passed a message
 buffer into an asynchronous entry method invocation, you shouldn’t
 access its fields, or pass that same buffer into a second entry method
 invocation. Note that this rule doesn’t preclude the *single reuse* of
-an input message - consider an entry method invocation :math:`i_1`,
-which receives as input the message buffer :math:`m_1`. Then,
-:math:`m_1` may be passed to an asynchronous entry method invocation
-:math:`i_2`. However, once :math:`i_2` has been issued with :math:`m_1`
-as its input parameter, :math:`m_1` cannot be used in any further entry
-method invocations.
+a received message - consider being inside the body of an entry method
+invocation :math:`i_1`, which has received the message buffer :math:`m_1`
+as an input parameter. Then, :math:`m_1` may be passed to an asynchronous
+entry method invocation :math:`i_2`. However, once :math:`i_2` has been
+issued with :math:`m_1` as its input parameter, :math:`m_1` cannot be
+used in any further entry method invocations.
 
 Several kinds of message are available. Regular Charm++ messages are
 objects of *fixed size*. One can have messages that contain pointers or
@@ -3655,7 +3847,7 @@ with the entire message comprises a contiguous buffer of memory.
 **Packed Messages.** A *packed* message is used to communicate
 non-linear data structures via messages. However, we defer a more
 detailed description of their use to
-§ :numref:`sec:messages/packed_msgs`.
+Section :numref:`sec:messages/packed_msgs`.
 
 .. _memory allocation:
 
@@ -3675,7 +3867,7 @@ code for messages. Message declaration is straightforward for fixed-size
 messages. Given a message of type ``MyFixedSizeMsg``, simply include the
 following in the .ci file:
 
-.. code-block:: c++
+.. code-block:: charmci
 
     message MyFixedSizeMsg;
 
@@ -3685,7 +3877,7 @@ encapsulate. The following example illustrates this requirement. In it,
 a message of type ``MyVarsizeMsg``, which encapsulates three
 variable-length arrays of different types, is declared:
 
-.. code-block:: c++
+.. code-block:: charmci
 
     message MyVarsizeMsg {
       int arr1[];
@@ -3782,7 +3974,7 @@ write:
 
 Notice the last argument to the overloaded new operator, which specifies
 the number of bits used to store message priority. The section on
-prioritized execution (§ :numref:`prioritized message passing`)
+prioritized execution (Section :numref:`prioritized message passing`)
 describes how priorities can be employed in your program.
 
 Another version of the overloaded new operator allows you to pass in an
@@ -4092,7 +4284,7 @@ exclusive
    is executing on node N, and another one is scheduled to run on the
    same node, the second exclusive method will wait to execute until the
    first one finishes. An example can be found in
-   ``tests/charm++/pingpong``.
+   ``benchmarks/charm++/pingpong``.
 
 nokeep
    entry methods take only a message as their lone argument, and the
@@ -4196,6 +4388,16 @@ local
    immediately, they are allowed to have a non-void return value. An
    example can be found in ``examples/charm++/hello/local``.
 
+whenidle
+   a local entry method meant to be used with ``CkCallWhenIdle``,
+   which registers an entry method to be called when a processor is
+   idle. This mechanism provides a convenient way to do work (e.g. low
+   priority or speculative) in the absence of other work. ``whenidle``
+   entry methods must return a ``bool`` value, indicating whether the
+   entry method should be called when the processor is idle again, and
+   accept a ``double`` argument representing the current timestamp. An
+   example can be found in ``examples/charm++/whenidle``.
+
 python
    entry methods are enabled to be called from python scripts as
    explained in chapter :numref:`python`. Note that the object owning
@@ -4213,7 +4415,7 @@ aggregate
    messages before being sent, to reduce fine-grained overhead. The
    aggregation is handled by the Topological Routing and Aggregation
    Module (TRAM). The argument to this entry method must be a single
-   fixed-size object. More details on TRAM are given in the `TRAM
+   PUPable object. More details on TRAM are given in the `TRAM
    section <http://charm.cs.illinois.edu/manuals/html/libraries/manual-1p.html#TRAM>`__
    of the libraries manual.
 
@@ -4433,8 +4635,8 @@ Zero Copy Messaging API
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 Apart from using messages, Charm++ also provides APIs to avoid sender
-and receiver side copies. On RDMA enabled networks like GNI, Verbs, PAMI
-and OFI, these internally make use of one-sided communication by using
+and receiver side copies. On RDMA enabled networks like GNI, Verbs, PAMI, OFI,
+and UCX these internally make use of one-sided communication by using
 the underlying Remote Direct Memory Access (RDMA) enabled network. For
 large arrays (few 100 KBs or more), the cost of copying during
 marshalling the message can be quite high. Using these APIs can help not
@@ -4449,60 +4651,65 @@ mainly due to additional small messages required for sending the
 metadata message and the acknowledgment message on completion.
 
 For within process data-transfers, this API uses regular memcpy to
-achieve zerocopy semantics. Similarly, on CMA-enabled machines, in a few
+achieve zero copy semantics. Similarly, on CMA-enabled machines, in a few
 cases, this API takes advantage of CMA to perform inter-process
 intra-physical host data transfers. This API is also functional on
 non-RDMA enabled networks like regular ethernet, except that it does not
 avoid copies and behaves like a regular Charm++ entry method invocation.
 
-There are two APIs that provide Zero copy semantics in Charm++:
+There are three APIs that provide zero copy semantics in Charm++:
 
 -  Zero Copy Direct API
 
 -  Zero Copy Entry Method Send API
 
+-  Zero Copy Entry Method Post API
+
 Zero Copy Direct API
 ^^^^^^^^^^^^^^^^^^^^
 
-The Zero copy Direct API allows users to explicitly invoke a standard
+The Zero Copy Direct API allows users to explicitly invoke a standard
 set of methods on predefined buffer information objects to avoid copies.
 Unlike the Entry Method API which calls the zero copy operation for
 every zero copy entry method invocation, the direct API provides a more
 flexible interface by allowing the user to exploit the persistent nature
 of iterative applications to perform zero copy operations using the same
 buffer information objects across iteration boundaries. It is also more
-beneficial than the Zero copy entry method API because unlike the entry
-method API, which avoids just the sender side copy, the Zero copy Direct
+beneficial than the Zero Copy Entry Method Send API because unlike the entry
+method Send API, which avoids just the sender side copy, the Zero Copy Direct
 API avoids both sender and receiver side copies.
 
-To send an array using the zero copy Direct API, define a CkNcpyBuffer
+To send an array using the Zero Copy Direct API, define a CkNcpyBuffer
 object on the sender chare specifying the pointer, size, a CkCallback
-object and an optional mode parameter.
+object and optional reg-mode and dereg-mode parameters.
 
 .. code-block:: c++
 
    CkCallback srcCb(CkIndex_Ping1::sourceDone, thisProxy[thisIndex]);
    // CkNcpyBuffer object representing the source buffer
-   CkNcpyBuffer source(arr1, arr1Size * sizeof(int), srcCb, CK_BUFFER_REG);
+   CkNcpyBuffer source(arr1, arr1Size * sizeof(int), srcCb);
+   // ^ is equivalent to CkNcpyBuffer source(arr1, arr1Size * sizeof(int), srcCb, CK_BUFFER_REG, CK_BUFFER_DEREG);
 
 When used inside a CkNcpyBuffer object that represents the source buffer
 information, the callback is specified to notify about the safety of
 reusing the buffer and indicates that the get or put call has been
-completed. In those cases where the application can determine safety of
+completed. In those cases where the application can determine the safety of
 reusing the buffer through other synchronization mechanisms, the
 callback is not entirely useful and in such cases,
 ``CkCallback::ignore`` can be passed as the callback parameter. The
-optional mode operator is used to determine the network registration
-mode for the buffer. It is only relevant on networks requiring explicit
-memory registration for performing RDMA operations. These networks
-include GNI, OFI and Verbs. When the mode is not specified by the user,
-the default mode is considered to be ``CK_BUFFER_REG``
+optional reg-mode and dereg-mode parameters are used to determine the network
+registration mode and de-registration mode for the buffer. They are only relevant on
+networks requiring explicit memory registration for performing RDMA operations.
+These networks include GNI, OFI, UCX and Verbs. When the reg-mode is not specified by the user,
+the default reg-mode is considered to be ``CK_BUFFER_REG`` and similarly, when the
+dereg-mode is not specified by the user, the default dereg-mode is considered to be
+``CK_BUFFER_DEREG``.
 
-Similarly, to receive an array using the Zero copy Direct API, define
+Similarly, to receive an array using the Zero Copy Direct API, define
 another CkNcpyBuffer object on the receiver chare object specifying the
-pointer, the size, a CkCallback object and an optional mode parameter.
-When used inside a CkNcpyBuffer object that represents the destination
-buffer, the callback is specified to notify the completion of data
+pointer, the size, a CkCallback object and the optional reg-mode and dereg-mode
+parameters. When used inside a CkNcpyBuffer object that represents the
+destination buffer, the callback is specified to notify the completion of data
 transfer into the CkNcpyBuffer buffer. In those cases where the
 application can determine data transfer completion through other
 synchronization mechanisms, the callback is not entirely useful and in
@@ -4513,7 +4720,8 @@ parameter.
 
    CkCallback destCb(CkIndex_Ping1::destinationDone, thisProxy[thisIndex]);
    // CkNcpyBuffer object representing the destination buffer
-   CkNcpyBuffer dest(arr2, arr2Size * sizeof(int), destCb, CK_BUFFER_REG);
+   CkNcpyBuffer dest(arr2, arr2Size * sizeof(int), destCb);
+   // is equivalent to CkNcpyBuffer dest(arr2, arr2Size * sizeof(int), destCb, CK_BUFFER_REG, CK_BUFFER_DEREG);
 
 Once the source CkNcpyBuffer and destination CkNcpyBuffer objects have
 been defined on the sender and receiver chares, to perform a get
@@ -4544,7 +4752,7 @@ into the local destination buffer.
 Similarly, a receiver’s destination CkNcpyBuffer object can be sent to
 the sender for the sender to perform a put on its source object by
 passing the source CkNcpyBuffer object as an argument to the runtime
-defined put method as shown in in the code snippet.
+defined put method as shown in the code snippet.
 
 .. code-block:: c++
 
@@ -4606,6 +4814,8 @@ method by casting the ``data`` field of the ``CkDataMsg`` object into a
 
        // access buffer pointer and free it
        free(source->ptr);
+
+       delete msg;
    }
 
 The following code snippet illustrates the usage of the ``setRef``
@@ -4636,6 +4846,8 @@ code snippet.
 
        // get reference pointer
        const void *refPtr = src->ref;
+
+       delete msg;
    }
 
 The usage of ``CkDataMsg`` and ``setRef`` in order to access the
@@ -4686,16 +4898,16 @@ be dynamically allocated. Additionally, the objects are also reusable
 across iteration boundaries i.e. after sending the CkNcpyBuffer object,
 the remote PE can use the same object to perform get or put. This
 pattern of using the same objects across iterations is demonstrated in
-``examples/charm++/zerocopy/direct_api/reg/pingpong``.
+``benchmarks/charm++/zerocopy/direct_api/reg/pingpong``.
 
 This API is demonstrated in ``examples/charm++/zerocopy/direct_api``
 
-Memory Registration and Modes of Operation
+Memory Registration and Registration Modes
 ''''''''''''''''''''''''''''''''''''''''''
 
-There are four modes of operation for the Zero Copy Direct API. These
-modes act as control switches on networks that require memory
-registration like GNI, OFI and Verbs, in order to perform RDMA
+There are four modes of memory registration for the Zero Copy API. These
+registration modes act as control switches on networks that require memory
+registration like GNI, OFI, UCX and Verbs, in order to perform RDMA
 operations . They dictate the functioning of the API providing flexible
 options based on user requirement. On other networks, where network
 memory management is not necessary (Netlrts) or is internally handled by
@@ -4758,18 +4970,50 @@ actual networking or registration information. It cannot be used for
 performing any zerocopy operations. This mode was added as it was useful
 for implementing a runtime system feature.
 
-Memory De-registration
-''''''''''''''''''''''
+Memory De-registration and De-registration Modes
+''''''''''''''''''''''''''''''''''''''''''''''''
 
-Similar to memory registration, there is a method available to
-de-register memory after the completion of the operations. This allows
-for other buffers to use the registered memory as machines/networks are
-limited by the maximum amount of registered or pinned memory. Registered
-memory can be de-registered by calling the ``deregisterMem()`` method on
-the CkNcpyBuffer object.
+On network layers that require explicit memory registration, it is
+important to de-register the registered memory. Since networks are limited
+by the maximum registered or pinned memory, not de-registering pinned memory can
+lead to a pinned memory leak, which could potentially reduce application performance
+because it limits the amount of pinned memory available to the process.
 
-Other Methods
-'''''''''''''
+Similar to memory registration modes, the ZC API also provides two de-registration modes.
+
+``CK_BUFFER_DEREG``:
+
+
+``CK_BUFFER_DEREG`` is the default mode that is used when no dereg-mode is
+specified. This mode signals to the RTS that all the memory registered by the ``CkNcpyBuffer``
+object should be de-registered by the RTS. Hence, when ``CK_BUFFER_DEREG`` is specified by the user,
+it is the runtime system's responsibility to de-register the buffer registered by the ``CkNcpyBuffer``
+object. This dereg-mode is used when the user is not likely to reuse the buffer and wants the
+de-registration responsibility transferred to the RTS.
+
+``CK_BUFFER_NODEREG``:
+
+This mode is specified when the user doesn't want the RTS to de-register the buffer after the
+completion of the zero copy operation. It is beneficial when the user wants to reuse the same buffer
+(and reuse the ``CkNcpyBuffer`` object) by avoiding the cost of de-registration and registration.
+
+
+Important Methods
+'''''''''''''''''
+
+The Zero Copy API provides important methods that offer utilities that
+can be used by the user.
+
+The ``deregisterMem`` method is used by the user to de-register memory after
+the completion of the zero copy operations. This allows for other buffers to use the
+registered memory as machines/networks are limited by the maximum amount of
+registered or pinned memory. Registered memory can be de-registered by calling
+the ``deregisterMem()`` method on the CkNcpyBuffer object.
+
+.. code-block:: c++
+
+   // de-register previously registered buffer
+   dest.registerMem();
 
 In addition to ``deregisterMem()``, there are other methods in a
 CkNcpyBuffer object that offer other utilities. The
@@ -4801,29 +5045,56 @@ registration memory handles and will not incur any registration costs.
    // register previously de-registered buffer
    src.registerMem();
 
+It should be noted that the Zero Copy Direct API is optimized only for
+point to point communication. Although it can be used for use cases where a
+single buffer needs to be broadcasted to multiple recipients, it is very likely
+that the API will currently perform suboptimally. This is primarily
+because of the implementation which assumes point to point communication for the
+Zero Copy Direct API. Having the same source buffer information (CkNcpyBuffer)
+being passed to a large number of processes, with each process performing a get call
+from the same source process will cause network congestion at the source process by
+slowing down each get operation because of competing get calls.
+
+We are currently working on optimizing the Zero Copy Direct API for broadcast operations.
+Currently, the Zero Copy Entry Method Send API and the Zero Copy Entry Method Post API
+handle optimized broadcast operations by using a spanning tree as explained in the following
+sections.
+
 Zero Copy Entry Method Send API
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The Zero copy Entry Method Send API only allows the user to only avoid
-the sender side copy without avoiding the receiver side copy. It
-offloads the user from the responsibility of making additional calls to
+The Zero Copy Entry Method Send API allows the user to only avoid
+the sender side copy. On the receiver side, the buffer is allocated by the
+runtime system and a pointer to the Readonly buffer is provided to the user
+as an entry method parameter.
+For a broadcast operation, there is only one buffer allocated by the
+runtime system for each recipient process and a pointer to the same buffer is passed
+to all the recipient objects on that process (or logical node).
+
+This API offloads the user from the responsibility of making additional calls to
 support zero copy semantics. It extends the capability of the existing
 entry methods with slight modifications in order to send large buffers
 without a copy.
 
-To send an array using the zero copy message send API, specify the array
+To send an array using the Zero Copy Message Send API, specify the array
 parameter in the .ci file with the nocopy specifier.
 
-.. code-block:: c++
+.. code-block:: charmci
 
+   // same .ci specification is used for p2p and bcast operations
    entry void foo (int size, nocopy int arr[size]);
 
 While calling the entry method from the .C file, wrap the array i.e the
-pointer in a CkSendBuffer wrapper.
+pointer in a CkSendBuffer wrapper. The CkSendBuffer wrapper is essentially
+a method that constructs a CkNcpyBuffer around the passed pointer.
 
 .. code-block:: c++
 
+   // for point to point send
    arrayProxy[0].foo(500000, CkSendBuffer(arrPtr));
+
+   // for readonly broadcast send
+   arrayProxy.foo(500000, CkSendBuffer(arrPtr));
 
 Until the RDMA operation is completed, it is not safe to modify the
 buffer. To be notified on completion of the RDMA operation, pass an
@@ -4832,24 +5103,129 @@ specific nocopy array.
 
 .. code-block:: c++
 
-   CkCallback cb(CkIndex_Foo::zerocopySent(NULL), thisProxy[thisIndex]);
-   arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, cb));
+   CkCallback cb1(CkIndex_Foo::zerocopySent(), thisProxy[thisIndex]);
 
-The callback will be invoked on completion of the RDMA operation
-associated with the corresponding array. Inside the callback, it is safe
-to overwrite the buffer sent via the zero copy entry method send API and
-this buffer can be accessed by dereferencing the CkDataMsg received in
-the callback.
+   // for point to point send
+   arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, cb1));
+
+   // for readonly broadcast send
+   arrayProxy.foo(500000, CkSendBuffer(arrPtr, cb1));
+
+The CkSendBuffer wrapper also allows users to specify two optional mode parameters.
+These are used to determine the network registration mode and network de-registration
+mode for the buffer.  It is only relevant on networks requiring explicit memory registration
+for performing RDMA operations. These networks include GNI, OFI, and Verbs. When the registration mode
+is not specified by the user, the default mode is considered to be ``CK_BUFFER_REG``. Similarly, when
+the de-registration mode is not specified by the user, the default mode is considered to be ``CK_BUFFER_DEREG``.
+Note that in order to specify a de-registration mode, the registration mode has to be specified in the
+constructor because of how default parameters work with constructors.
+
+.. code-block:: c++
+
+   /* Specifying registration modes only, without any de-registration mode (uses default de-reg mode) */
+
+   // for point to point send
+   arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_REG));
+
+   // or arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, cb1)); for REG reg-mode because of REG being the default
+   // or arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_UNREG)); for UNREG reg-mode
+   // or arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_PREREG)); for PREREG reg-mode
+
+   // for bcast send
+   arrayProxy.foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_REG));
+
+   // or arrayProxy.foo(500000, CkSendBuffer(arrPtr, cb1)); for REG reg-mode because of REG being the default
+   // or arrayProxy.foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_UNREG)); for UNREG reg-mode
+   // or arrayProxy.foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_PREREG)); for PREREG reg-mode
+
+   /* Specifying de-registration modes */
+
+   // for point to point send
+   arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_REG, CK_BUFFER_DEREG));
+
+   // or arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_REG)); for DEREG dereg-mode because of DEREG being the default
+   // or arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_REG, CK_BUFFER_NODEREG)); for NODEREG dereg-mode
+
+   // for bcast send
+   arrayProxy.foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_REG, CK_BUFFER_DEREG));
+
+   // or arrayProxy.foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_REG)); for DEREG dereg-mode because of DEREG being the default
+   // or arrayProxy.foo(500000, CkSendBuffer(arrPtr, cb1, CK_BUFFER_REG, CK_BUFFER_NODEREG)); for NODEREG dereg-mode
+
+
+The memory registration mode and de-registration mode can also be specified without a callback, as shown below:
+
+.. code-block:: c++
+
+   /* Specifying registration modes only, without any de-registration mode (uses default de-reg mode) */
+
+   // for point to point send
+   arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_REG));
+
+   // or arrayProxy[0].foo(500000, CkSendBuffer(arrPtr)); for REG reg-mode because of REG being the default
+   // or arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_UNREG)); for UNREG reg-mode
+   // or arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_PREREG)); for PREREG reg-mode
+
+   // for bcast send
+   arrayProxy.foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_REG));
+
+   // or arrayProxy.foo(500000, CkSendBuffer(arrPtr)); for REG reg-mode because of REG being the default
+   // or arrayProxy.foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_UNREG)); for UNREG reg-mode
+   // or arrayProxy.foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_PREREG)); for PREREG reg-mode
+
+   /* Specifying de-registration modes */
+
+   // for point to point send
+   arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_REG, CK_BUFFER_DEREG));
+
+   // or arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_REG)); for DEREG dereg-mode because of DEREG being the default
+   // or arrayProxy[0].foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_REG, CK_BUFFER_NODEREG)); for NODEREG dereg-mode
+
+   // for bcast send
+   arrayProxy.foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_REG, CK_BUFFER_DEREG));
+
+   // or arrayProxy.foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_REG)); for DEREG dereg-mode because of DEREG being the default
+   // or arrayProxy.foo(500000, CkSendBuffer(arrPtr, CK_BUFFER_REG, CK_BUFFER_NODEREG)); for NODEREG dereg-mode
+
+
+In the case of point to point communication, the callback will be invoked on completion
+of the RDMA operation associated with the corresponding array.
+
+For zero copy broadcast operations, the callback will be invoked when all the broadcast
+recipient processes have successfully received the broadcasted array. Note that this does
+not necessarily mean that the recipient objects have received the data i.e. it is possible that the
+process (or the logical node) has received the data, but the individual entry methods
+are still waiting in the scheduler (and are scheduled to run) and hence have not received the
+data.
+
+
+Inside the callback, it is safe to overwrite the buffer sent via the Zero Copy Entry Method Send API.
 
 .. code-block:: c++
 
    //called when RDMA operation is completed
-   void zerocopySent(CkDataMsg *m)
+   void zerocopySent() {
+     // update the buffer to the next pointer
+     updateBuffer();
+   }
+
+The callback methods can also take a pointer to a ``CkDataMsg`` message.
+This message can be used to access the original buffer information
+object i.e. the ``CkNcpyBuffer`` object constructed by CkSendBuffer and
+used for the zero copy transfer. The buffer information object available in
+the callback allows access to all its information including the buffer pointer.
+
+.. code-block:: c++
+
+   //called when RDMA operation is completed
+   void zerocopySent(CkDataMsg *msg)
    {
-     //get access to the pointer and free the allocated buffer
-     void *ptr = *((void **)(m->data));
-     free(ptr);
-     delete m;
+     // Cast msg->data to a CkNcpyBuffer to get the source buffer information object
+     CkNcpyBuffer *source = (CkNcpyBuffer *)(msg->data));
+
+     // access buffer pointer and free it
+     free(ptr); // if the callback is executed on the source process
+     delete msg;
    }
 
 The RDMA call is associated with a nocopy array rather than the entry
@@ -4859,6 +5235,19 @@ it is attached to and not to all the nocopy arrays passed in an entry
 method invocation. On completion of the RDMA call for each array, the
 corresponding callback is separately invoked.
 
+On the receiver side, the entry method is defined as a regular entry method in the .C file,
+with the nocopy parameter being received as a pointer as shown below:
+
+.. code-block:: c++
+
+   void foo (int size, int *arr) {
+     // data received in runtime system buffer pointed by arr
+     // Note that 'arr' buffer is Readonly
+
+     computeValues();
+   }
+
+
 As an example, for an entry method with two nocopy array parameters,
 each called with the same callback, the callback will be invoked twice:
 on completing the transfer of each of the two nocopy parameters.
@@ -4866,7 +5255,7 @@ on completing the transfer of each of the two nocopy parameters.
 For multiple arrays to be sent via RDMA, declare the entry method in the
 .ci file as:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    entry void foo (int size1, nocopy int arr1[size1], int size2, nocopy double arr2[size2]);
 
@@ -4879,28 +5268,30 @@ associated with each nocopy array.
    CkCallback cb2(CkIndex_Foo::zerocopySent2(NULL), thisProxy[thisIndex]);
    arrayProxy[0].foo(500000, CkSendBuffer(arrPtr1, cb1), 1024000, CkSendBuffer(arrPtr2, cb2));
 
-This API is demonstrated in
+This API for point to point communication is demonstrated in
 ``examples/charm++/zerocopy/entry_method_api`` and
-``tests/charm++/pingpong``
+``benchmarks/charm++/pingpong``. For broadcast operations, the usage of this API is
+demonstrated in ``examples/charm++/zerocopy/entry_method_bcast_api``.
 
 It should be noted that calls to entry methods with nocopy specified
-parameters are currently only supported for point to point operations
-and not for collective operations. Additionally, there is also no
-support for migration of chares that have pending RDMA transfer
-requests.
+parameters is currently supported for point to point operations
+and only collection-wide broadcast operations like broadcasts across an entire
+chare array or group or nodegroup. It is yet to be supported for section broadcasts.
+Additionally, there is also no support for migration of chares that have
+pending RDMA transfer requests.
 
 It should also be noted that the benefit of this API can be seen for
 large arrays on only RDMA enabled networks. On networks which do not
-support RDMA and for within process sends (which uses shared memory),
+support RDMA, and, for within process sends (which uses shared memory),
 the API is functional but doesn’t show any performance benefit as it
 behaves like a regular entry method that copies its arguments.
 
 Table :numref:`tab:rdmathreshold` displays the
-message size thresholds for the zero copy entry method send API on
+message size thresholds for the Zero Copy Entry Method Send API on
 popular systems and build architectures. These results were obtained by
-running ``examples/charm++/zerocopy/entry_method_api/pingpong`` in
+running ``benchmarks/charm++/zerocopy/entry_method_api/pingpong`` in
 non-SMP mode on production builds. For message sizes greater than or
-equal to the displayed thresholds, the zero copy API is found to perform
+equal to the displayed thresholds, the Zero Copy API is found to perform
 better than the regular message send API. For network layers that are
 not pamilrts, gni, verbs, ofi or mpi, the generic implementation is
 used.
@@ -4919,6 +5310,221 @@ used.
    Intel Cluster (Bridges)       Intel Omni-Path ``ofi-linux-x86_64``   64 KB           32 KB      32 KB
    Intel KNL Cluster (Stampede2) Intel Omni-Path ``ofi-linux-x86_64``   1 MB            64 KB      64 KB
    ============================= =============== ====================== =============== ========== ==========
+
+Zero Copy Entry Method Post API
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The Zero Copy Entry Method Post API is an extension of the Zero Copy Entry Method
+Send API. This API allows users to receive the sent data in a user posted buffer. In
+addition to saving the sender side copy, it also avoids the receiver side copy by not
+using any intermediate buffers and directly receiving the data in the user posted buffer.
+Unlike the Zero Copy Entry Method Send API, this API should be used when the user wishes
+to receive the data in a user posted buffer, which is allocated and managed by the user.
+
+The posting of the receiver buffer happens at an object level, where each recipient object,
+for example, a chare array element or a group element or nodegroup element matches the received
+source buffer with a receiver buffer using tag matching.
+
+To send an array using the Zero Copy Post API, specify the array
+parameter in the .ci file with the nocopypost specifier.
+
+.. code-block:: charmci
+
+   // same .ci specification is used for p2p and bcast operations
+   entry void foo (int size, nocopypost int arr[size]);
+
+   // ^ note that the nocopypost specifier is different from nocopy and
+   // indicates the usage of the post API for the array arr
+
+The sender side code for the Zero Copy Entry Method Post API is exactly the same as
+Zero Copy Entry Method Send API and can be referenced from the previous section. In this section,
+we will highlight the differences between the two APIs and demonstrate the usage of the Post API
+on the receiver side.
+
+As previously mentioned, the Zero Copy Entry Method Post API matches and posts user buffers to receive the
+data sent by the sender. This is done using a special overloaded version of the recipient
+entry method, called Post entry method. The overloaded function has all the entry method parameters
+and an additional ``CkNcpyBufferPost`` array parameter at the end of the signature. Inside this post
+entry method, the user is required to make calls to ``CkMatchBuffer`` to specify the association between
+the received source buffer and a user provided integer tag. Additionally, for every ``CkMatchBuffer`` call,
+the user is also required to make a corresponding ``CkPostBuffer`` call with the same tag to specify the association
+between that tag and a receiver buffer. Note that the ``CkMatchBuffer`` call should always be made inside
+the Post Entry Method, whereas the ``CkPostBuffer`` call can be made from anywhere in the program whenever the
+receiver is ready to post a buffer. The Post Entry method executes on the arrival of the metadata message, and
+the ``CkPostBuffer`` call for receiving those buffers can be executed before, after, or inside the Post Entry Method.
+However, it is important to note that it is required that both the ``CkMatchBuffer`` and ``CkPostBuffer`` calls are made
+on the same PE.
+
+The post entry method also allows the receiver to specify the memory registration mode and the memory
+de-registration mode. This is done by indexing the ncpyPost array and assigning the ``regMode`` and ``deregMode``
+parameters present inside each array element of the ``CkNcpyBufferPost`` array. When the network memory
+registration mode is unassigned by the user, the default ``CK_BUFFER_REG`` regMode is used. Similarly, when
+the de-registration mode is unassigned by the user, the default ``CK_BUFFER_DEREG`` deregMode is used.
+It is important to ensure that the ``CkMatchBuffer`` call is made after setting the ``regMode`` and/or ``deregMode``
+parameters.
+
+For the entry method ``foo`` specified with a nocopypost specifier, the resulting post entry method defined
+in the .C file will be:
+
+.. code-block:: c++
+
+   void foo (int size, int *arr, CkNcpyBufferPost *ncpyPost) {
+
+     ncpyPost[0].regMode = CK_BUFFER_REG; // specify the regMode for the 0th pointer
+
+     ncpyPost[0].deregMode = CK_BUFFER_DEREG; // specify the deregMode for the 0th pointer
+
+     CkMatchBuffer(ncpyPost, 0, 22);
+   }
+
+As seen in the above example, the ``CkMatchBuffer`` call associates the 0th source buffer with tag 22.
+It has the following signature:
+
+.. code-block:: c++
+
+   template <typename T>
+   void CkMatchBuffer(CkNcpyBufferPost *post, int index, int tag);
+
+It takes three parameters, the passed ``CkNcpyBufferPost`` pointer, index, and tag.
+The first parameter is always the ``CkNcpyBufferPost`` parameter received in the
+Post Entry Method. The second parameter is the index of the nocopypost buffer among the nocopypost buffers sent
+in the entry method, starting with 0. For example, for 1 nocopypost buffer sent in the entry method, the index will
+always be 0. For 2 nocopypost buffers, the index will be 0 for the first buffer and 1 for the second buffer. For n
+buffers, it will be 0 for the first buffer, 1 for the second buffer, 2 for the third buffer up to (n-1) for the nth buffer.
+The third parameter is a user provided integer tag (22 in this case), used to associate the 0th source buffer of this
+entry method with tag 22.
+
+In order to post a buffer when ready, the user has to also call ``CkPostBuffer`` with the same tag (22) to associate
+the tag (22) with a receiver or destination buffer. As mentioned earlier, this function can be called at any time the user
+is ready to post a buffer. The following code illustrates the usage of ``CkPostBuffer``, which is called in a function
+when the user is ready to supply a destination buffer.
+
+.. code-block:: c++
+
+   void readyToPost() {
+     CkPostBuffer(myBuffer, mySize, 22);
+   }
+
+As seen in the above example, the ``CkPostBuffer`` call has the following signature:
+
+.. code-block:: c++
+
+   template <typename T>
+   void CkPostBuffer(T *buffer, size_t size, int tag);
+
+It takes three parameters, the destination buffer pointer, the size of the destination buffer and a tag.
+The first parameter is the destination buffer pointer where the user wants the source data. The second parameter
+is the size of the destination buffer. Note that this size should be always smaller than or equal to the size of the source buffer.
+The third parameter is the same user provided integer tag (22 in this case) that was used in the corresponding ``CkMatchBuffer``
+call inside the Post Entry Method.
+
+It is important to associate a unique tag with the ``CkMatchBuffer`` and ``CkPostBuffer`` calls for a single buffer on that PE.
+Using the same tag on the PE when the RDMA transfer is in progress triggers an abort from the runtime system because
+the same tag cannot be used to denote two different buffers in the internal PE-level data structures.
+
+After the execution of the Post Entry Method with the ``CkMatchBuffer`` calls and corresponding ``CkPostBuffer`` calls,
+the regular entry method is executed to signal the completion of all zero copy transfers into the posted receiver buffers.
+The regular entry method needs to be defined as in the case of the Entry Method Send API as shown below:
+
+.. code-block:: c++
+
+  void foo (int size, int *arr) {
+    // arr points to myBuffer and the data sent is received in myBuffer
+    // Note that 'arr' buffer is the same as myBuffer, which is user allocated and managed
+
+    computeValues();
+  }
+
+Similarly, for sending and receiving multiple arrays, the .ci file specification will be:
+
+.. code-block:: charmci
+
+  entry void foo(nocopypost int arr1[size1], int size1, nocopypost char arr2[size2], int size2);
+
+
+In the .C file, we define a post entry method and a regular entry method:
+
+.. code-block:: c++
+
+  // post entry method
+  void foo(int *arr1, int size1, char *arr2, int size2, CkNcpyBufferPost *ncpyPost) {
+
+    ncpyPost[0].regMode = CK_BUFFER_UNREG;
+    ncpyPost[0].deregMode = CK_BUFFER_DEREG;
+    CkMatchBuffer(ncpyPost, 0, 60);
+
+    ncpyPost[1].regMode = CK_BUFFER_PREREG; // myBuffer2 is allocated using CkRdmaAlloc
+    ncpyPost[1].deregMode = CK_BUFFER_NODEREG;
+    CkMatchBuffer(ncpyPost, 1, 61);
+  }
+
+  void otherFn1() {
+    // somewhere else in the code
+    CkPostBuffer(myBuffer1, mySize1, 60);
+  }
+
+  void otherFn2() {
+    // somewhere else in the code
+    CkPostBuffer(myBuffer2, mySize2, 61);
+  }
+
+  // regular entry method
+  void foo(int *arr1, int size1, char *arr2, int size2) {
+
+    // sent buffer is received in myBuffer1, same as arr1
+
+    // sent buffer is received in myBuffer2, same as arr2
+  }
+
+It is important to note that the ``CkNcpyBufferPost`` array has as many elements as the
+number of ``nocopypost`` parameters in the entry method declaration in the .ci file. For
+n nocopypost parameters, the ``CkNcpyBufferPost`` array is indexed by 0 to n-1.
+
+This API for point to point communication and broadcast is demonstrated in
+``tests/charm++/zerocopy/zc_post_async``.
+
+In addition to the PE-level match and post buffers as described above, there are node-level
+variants of the same methods called ``CkMatchNodeBuffer`` and ``CkPostNodeBuffer``. They
+have the exact same signature but are applicable for node-level matching operations that
+are often useful for node groups. The node equivalent match and post buffers allows two
+different PEs of the same node to call ``CkMatchNodeBuffer`` and ``CkPostNodeBuffer``.
+Similar to the PE-level API, it is important to associate a unique tag with the
+``CkMatchNodeBuffer`` and ``CkPostNodeBuffer`` calls for a single buffer on that node.
+Using the same tag on the node when the RDMA transfer is in progress triggers an abort
+from the runtime system because the same tag cannot be used to denote two different buffers
+in the internal node-level data structures.
+
+Similar to the Zero Copy Entry Method Send API, it should be noted that calls to
+entry methods with nocopypost specified parameters are currently supported for
+point to point operations and only collection-wide broadcast operations like broadcasts
+across an entire chare array or group or nodegroup. It is yet to be supported for
+section broadcasts. Additionally, there is also no support for migration of chares that have
+pending RDMA transfer requests.
+
+
+Using Zerocopy Post API in iterative applications
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+In iterative applications, when using the Zerocopy Post API, it is important to post different
+buffers for each iteration in order to receive each iteration's sent data in a separate buffer.
+Posting the same buffer across iterations could lead to overwriting the buffer when the receiver receives
+a message for that entry method. An example illustrating the use of the Zerocopy Post API to post
+different buffers in an iterative program, which uses SDAG is
+``examples/charm++/zerocopy/entry_method_post_api/reg/multiplePostedBuffers``. It is also important
+to post different buffers for each unique sender in order to receive each sender's data in a separate
+buffer. Posting the same buffer for different senders would overwrite the buffer when the receiver
+receives a message for that entry method.
+
+Additionally, in iterative applications which use load balancing, for the load balancing iterations,
+it is required to ensure that the Zerocopy sends are performed only after all chare array elements have
+completed migration. This can be achieved by a chare array wide reduction after ``ResumeFromSync`` has been
+reached. This programming construct has the same effect as that of a barrier, enforced after array elements
+have completed load balancing. This is required to avoid cases where it is possible that the buffer is
+posted on receiving a send and is then freed by the destructor or the unpacking pup method,
+which is invoked by the RTS because of migration due to load balancing. This scheme of using a
+reduction following ``ResumeFromSync`` is illustrated in
+``examples/charm++/zerocopy/entry_method_post_api/reg/simpleZeroCopy`` and
+``examples/charm++/zerocopy/entry_method_post_api/reg/multiplePostedBuffers``.
 
 .. _callbacks:
 
@@ -5025,6 +5631,11 @@ Possible constructors are:
 #. CkCallback(int ep, int onPE, const CkGroupID &id) - When invoked, the
    callback will send its message to the given entry method of the given
    group member.
+
+#. CkCallback(CkFuture fut) - When invoked, the callback will send its
+   message to the given future. For a ck::future object, the underlying
+   CkFuture is accesible via its handle method. For an example, see:
+   ``examples/charm++/hello/xarraySection/hello.C``
 
 One final type of callback, CkCallbackResumeThread(), can only be used
 from within threaded entry methods. This callback type is discussed in
@@ -5224,7 +5835,7 @@ returned data can either be in the form of a Charm++ message or any type
 that has the PUP method implemented. Because the caller of a sync entry
 method will block, it must execute in a thread separate from the
 scheduler; that is, it must be a threaded entry method (*cf.*
-§ :numref:`threaded`, above). If a sync entry method returns a value,
+Section :numref:`threaded`, above). If a sync entry method returns a value,
 it is provided as the return value from the invocation on the proxy
 object:
 
@@ -5253,21 +5864,35 @@ is created, a *reference* is returned immediately. However, if the
 *value* calculated by the future is needed, the calling program blocks
 until the value is available.
 
-Charm++ provides all the necessary infrastructure to use futures by
-means of the following functions:
+We provide both C-compatible and object-oriented interfaces for using
+futures, which include the following functions:
 
-.. code-block:: c++
++------------------------------------------------------+-------------------------------------+
+| C                                                    | C++                                 |
++======================================================+=====================================+
+| :code:`CkFuture CkCreateFuture(void)`                | :code:`ck::future()`                |
++------------------------------------------------------+-------------------------------------+
+| :code:`void CkReleaseFuture(CkFuture fut)`           | :code:`void ck::future::release()`  |
++------------------------------------------------------+-------------------------------------+
+| :code:`int CkProbeFuture(CkFuture fut)`              | :code:`bool ck::future::is_ready()` |
++------------------------------------------------------+-------------------------------------+
+| :code:`void *CkWaitFuture(CkFuture fut)`             | :code:`T ck::future::get()`         |
++------------------------------------------------------+-------------------------------------+
+| :code:`void CkSendToFuture(CkFuture fut, void *msg)` | :code:`void ck::future::set(T)`     |
++------------------------------------------------------+-------------------------------------+
 
-    CkFuture CkCreateFuture(void)
-    void CkReleaseFuture(CkFuture fut)
-    int CkProbeFuture(CkFuture fut)
-    void *CkWaitFuture(CkFuture fut)
-    void CkSendToFuture(CkFuture fut, void *msg)
+The object-oriented versions are methods of ``ck::future<T>``, which can be templated with any
+PUP-able type. Note, in most cases, messages/values cannot be retrieved via ``get`` when they were
+not been sent/set by a corresponding call to ``set``; however, it can receive messages of supported,
+internal message types sent via ``CkSendFuture``. Other message types must be wrapped as a PUP-able
+value and explicitly received as the expected message type(s); for example, one might wrap a message
+as ``CkMarshalledMsg`` or ``MsgPointerWrapper`` then type-cast the (``void*``) message on the
+receiver-side. In such cases, one may consider using the C-like API for greater efficiency.
 
-To illustrate the use of all these functions, a Fibonacci example in
-Charm++ using futures in presented below:
+An example of the object-oriented interface is available under `examples/charm++/future`, with an
+equivalent example for the C-compatible interface presented below:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    chare fib {
      entry fib(bool amIroot, int n, CkFuture f);
@@ -5315,8 +5940,34 @@ Other functions complete the API for futures. *CkReleaseFuture* destroys
 a future. *CkProbeFuture* tests whether the future has already finished
 computing the value of the expression.
 
-The Converse version of future functions can be found in the :ref:`conv-futures`
-section.
+The maximum number of outstanding futures a PE may have is limited by the size of
+*CMK_REFNUM_TYPE*. Specifically, no more than :math:`2^{SIZE}-1` futures, where :math:`SIZE`
+is the size of *CMK_REFNUM_TYPE* in bits, may be outstanding at any time.
+Waiting on more futures will cause a fatal error in non-production builds,
+and will cause the program to hang in production builds. The default *CMK_REFNUM_TYPE*
+is ``unsigned short``, limiting each PE to 65,535 outstanding futures.
+To increase this limit, build Charm++ with a larger *CMK_REFNUM_TYPE*, e.g. specifying
+``--with-refnum-type=uint`` to use ``unsigned int`` when building Charm++.
+
+There are additional facilities for operating on collections of futures, which include:
+
++-------------------+-----------+---------------------------------------------------+
+| Function          | Blocking? | Description                                       |
++===================+===========+===================================================+
+| ``ck::wait_any``  | Yes       | Take a value, as soon as one is available, and    |
+|                   |           | return a pair with the value and position of the  |
+|                   |           | fulfilled future. (``std::pair<T, InputIter>``)   |
++-------------------+-----------+---------------------------------------------------+
+| ``ck::wait_all``  | Yes       | Wait for all the futures to become available, and |
+|                   |           | return a vector of values. (``std::vector<T>``)   |
++-------------------+-----------+---------------------------------------------------+
+| ``ck::wait_some`` | No        | Take any immediately available values, returning  |
+|                   |           | the values and any outstanding futures.           |
+|                   |           | (``std::pair<std::vector<T>, InputIter>``)        |
++-------------------+-----------+---------------------------------------------------+
+
+Note, these are also demonstrated in ``examples/charm++/future``. The Converse
+version of future functions can be found in the :ref:`conv-futures` section.
 
 .. _sec-completion:
 
@@ -5467,7 +6118,7 @@ has two variants which expect the following arguments:
    Upon quiescence detection, the specified callback is called with no
    parameters. Note that using this variant, you could have your program
    terminate after quiescence is detected, by supplying the above method
-   with a CkExit callback (§ :numref:`sec:callbacks/creating`).
+   with a CkExit callback (Section :numref:`sec:callbacks/creating`).
 
 #. An index corresponding to the entry function that is to be called,
    and a handle to the chare on which that entry function should be
@@ -5503,7 +6154,7 @@ this:
 
 Note that CkWaitQD should only be called from a threaded entry method
 because a call to CkWaitQD suspends the current thread of execution
-(*cf.* § :numref:`threaded`).
+(*cf.* Section :numref:`threaded`).
 
 .. _advanced arrays:
 
@@ -5636,9 +6287,20 @@ create them, CkArrayOptions contains a few flags that the runtime can
 use to optimize handling of a given array. If the array elements will
 only migrate at controlled points (such as periodic load balancing with
 ``AtASync()``), this is signaled to the runtime by calling
-``opts.setAnytimeMigration(false)``\  [11]_. If all array elements will
-be inserted by bulk creation or by ``fooArray[x].insert()`` calls,
-signal this by calling ``opts.setStaticInsertion(true)``  [12]_.
+``opts.setAnytimeMigration(false)``\  [11]_. Similarly, certain optimizations can
+be made if all array elements are statically inserted via bulk construction during the
+``ckNew(...)`` call [12]_. By default, insertion is set to ``STATIC`` if ``ckNew`` is
+called with a non-zero number of initial elements, and is set to ``DYNAMIC`` in cases
+where the number of initial elements is 0. Applications can call
+``opts.setStaticInsertion(false)`` to override this behavior for cases where there are a
+non-zero number of initial insertions, but more dynamic insertions will follow.
+
+If the application needs to know when an array has been fully constructed, CkArrayOptions
+provides ``CkArrayOptions::setInitCallback(CkCallback)``. The callback passed will be
+invoked once every element in the initial set of elements has been created. This works
+both for bulk insertion, and if dynamic insertion is used to create the initial elements.
+In the latter case, after the initial elements have been inserted and ``doneInserting`` is
+called, the initialization callback will be invoked once all insertions have completed.
 
 .. _array map:
 
@@ -5674,7 +6336,7 @@ CkArrayMap and defines these virtual methods:
 For example, a simple 1D blockmapping scheme. Actual mapping is handled
 in the procNum function.
 
-.. code-block:: c++
+.. code-block:: charmci
 
     // In the .ci file:
     group BlockMap : CkArrayMap {
@@ -5751,19 +6413,17 @@ is the constructor message to pass, and ``mgr`` is the array manager which
 creates the elements.
 
 To create an element, call ``void CkArray::insertInitial(CkArrayIndex
-idx,void\* ctorMsg)`` on ``mgr``, passing in the index and a copy of the
+idx, void* ctorMsg)`` on ``mgr``, passing in the index and a copy of the
 constructor message. For example, to insert a 2D element (x,y), call:
 
 .. code-block:: c++
 
     mgr->insertInitial(CkArrayIndex2D(x,y), CkCopyMsg(&msg));
 
-After inserting elements, inform the array manager that all elements have been
-created, and free the constructor message:
+After inserting elements free the constructor message:
 
 .. code-block:: c++
 
-    mgr->doneInserting();
     CkFreeMsg(msg);
 
 A simple example using populateInitial can be found in
@@ -5864,17 +6524,17 @@ element does not need to call *AtSync()* itself.
 Dynamic Insertion
 ^^^^^^^^^^^^^^^^^
 
-In addition to creating initial array elements using ckNew, you can also
-create array elements during the computation.
+In addition to creating initial array elements using ``ckNew(...)``,
+you can also create array elements during the computation.
 
 You insert elements into the array by indexing the proxy and calling
-insert. The insert call optionally takes parameters, which are passed to
-the constructor; and a processor number, where the element will be
-created. Array elements can be inserted in any order from any processor
-at any time. Array elements need not be contiguous.
+``insert(...)``. This call optionally takes parameters, which are
+passed to the constructor, and a processor number, where the element
+will be created. Array elements can be inserted in any order from any
+processor at any time. Array elements need not be contiguous.
 
 If using insert to create all the elements of the array, you must call
-CProxy_Array::doneInserting before using the array.
+``CProxy_Array::doneInserting()`` before using the array.
 
 .. code-block:: c++
 
@@ -5904,14 +6564,21 @@ CProxy_Array::doneInserting before using the array.
    }
    aF.doneInserting();
 
-The doneInserting call starts the reduction manager (see “Array
-Reductions”) and load balancer (see  :numref:`lbFramework`)- since
-these objects need to know about all the array’s elements, they must be
-started after the initial elements are inserted. You may call
-doneInserting multiple times, but only the first call actually does
-anything. You may even insert or destroy elements after a call to
-doneInserting, with different semantics- see the reduction manager and
-load balancer sections for details.
+The ``doneInserting()`` call starts the reduction manager (see “Array
+Reductions”) and load balancer (see :numref:`lbFramework`). Since
+these objects need to know about all the array’s elements, they must
+be started after the initial elements are inserted. If this is the first wave
+of insertions, and an initialization callback was set on ``CkArrayOptions`` it will be
+invoked once these initial elements have all been created. You may call
+``doneInserting()`` multiple times, but only the first call actually
+does anything. You may even insert or destroy elements after a call to
+``doneInserting()``, with different semantics - see the reduction
+manager. For AtSync load balancing, subsequent dynamic insertion or
+deletion sessions should begin with a call to
+``CProxy_Array::beginInserting()`` and end with a call to
+``doneInserting()``. ``beginInserting()`` is also idempotent and can
+be called multiple times with only the first having any effect until
+``doneInserting()`` is called on the same array proxy on the same PE.
 
 If you do not specify one, the system will choose a processor to create
 an array element on based on the current map object.
@@ -6019,7 +6686,7 @@ user code. Larger values will increase the size of each message.
 
 You can then declare an array indexed by Foo objects with
 
-.. code-block:: c++
+.. code-block:: charmci
 
     // in the .ci file:
     array [Foo] AF { entry AF(); ... }
@@ -6067,7 +6734,7 @@ Charm++ also supports sections which are a subset of elements of
 multiple chare arrays/groups of the same type (see
 :numref:`cross array section`).
 
-Multicast operations, a broadcast to all members of a section, are
+Multicast operations (a broadcast to all members of a section) are
 directly supported by the section proxy. For array sections, multicast
 operations by default use optimized spanning trees via the CkMulticast
 library in Charm++. For group sections, multicast operations by default
@@ -6128,22 +6795,24 @@ Group sections
 
 Group sections are created in the same way as array sections. A group
 “A” will have an associated “CProxySection_A” type which is used to
-create a section and obtain a proxy. In this case, ckNew() will receive
+create a section and obtain a proxy. In this case, ``ckNew()`` will receive
 the list of PE IDs which will form the section. See
-examples/charm++/groupsection for an example.
+``examples/charm++/groupsection`` for an example.
 
-It is important to note that Charm++ does not automatically delegate
-group sections to the internal CkMulticast library, and instead defaults
-to a point-to-point implementation of multicasts. To use CkMulticast
-with group sections, the user must manually delegate after invoking
-group creation. See :numref:`Manual Delegation` for information on how
-to do this.
+.. important::
+    It is important to note that Charm++ does not automatically delegate
+    group sections to the internal CkMulticast library, and instead defaults
+    to a point-to-point implementation of multicasts. To use CkMulticast
+    with group sections, the user must manually delegate after invoking
+    group creation. See :numref:`Manual Delegation` for information on how
+    to do this.
 
 Creation order restrictions
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Important: Array sections should be created in post-constructor entry
-methods to avoid race conditions.
+.. attention::
+    Array sections should be created in post-constructor entry
+    methods to avoid race conditions.
 
 If the user wants to invoke section creation from a group, special care
 must be taken that the collection for which we are creating a section
@@ -6173,7 +6842,7 @@ broadcast to all the section members, like this:
      CProxySection_Hello proxy;
      proxy.someEntry(...); // section broadcast
 
-See examples/charm++/arraysection for examples on how sections are used.
+See ``examples/charm++/arraysection`` for examples on how sections are used.
 
 You can send the section proxy in a message to another processor, and
 still safely invoke the entry functions on the section proxy.
@@ -6195,10 +6864,8 @@ factor when creating the section.
 
      CProxySection_Hello sectProxy = CProxySection_Hello::ckNew(..., 3); // factor is 3
 
-Note, to use CkMulticast library, all multicast messages must inherit
-from CkMcastBaseMsg, as the following example shows. Note that
-CkMcastBaseMsg must come first, this is IMPORTANT for CkMulticast
-library to retrieve section information out of the message.
+Note that, to use CkMulticast library, all multicast messages must inherit
+from CkMcastBaseMsg, as the following example shows.
 
 .. code-block:: c++
 
@@ -6207,6 +6874,10 @@ library to retrieve section information out of the message.
    public:
      int *data;
    };
+
+.. attention::
+    CkMcastBaseMsg must come first, this is important for CkMulticast
+    library to retrieve section information from the message.
 
 Due to this restriction, when using CkMulticast you must define messages
 explicitly for multicast entry functions and no parameter marshalling
@@ -6223,12 +6894,12 @@ default case for array sections), or manually for group sections.
 Since an array element can be a member of multiple array sections, it is
 necessary to disambiguate between which array section reduction it is
 participating in each time it contributes to one. For this purpose, a
-data structure called “CkSectionInfo” is created by CkMulticast library
+data structure called ``CkSectionInfo`` is created by CkMulticast library
 for each array section that the array element belongs to. During a
 section reduction, the array element must pass the CkSectionInfo as a
-parameter in the contribute(). The CkSectionInfo for a section can be
+parameter in the ``contribute()``. The CkSectionInfo for a section can be
 retrieved from a message in a multicast entry point using function call
-CkGetSectionInfo:
+``CkGetSectionInfo()``:
 
 .. code-block:: c++
 
@@ -6266,15 +6937,15 @@ As in an array reduction, users can use built-in reduction types
 (Section :numref:`builtin_reduction`) or define his/her own reducer
 functions (Section :numref:`new_type_reduction`).
 
-Section Operations and Migration
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Section Operations with Migrating Elements
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When using a section reduction, you don’t need to worry about migrations
 of array elements. When migration happens, an array element in the array
 section can still use the CkSectionInfo it stored previously for doing a
 reduction. Reduction messages will be correctly delivered but may not be
 as efficient until a new multicast spanning tree is rebuilt internally
-in the CkMulticastMgr library. When a new spanning tree is rebuilt, an
+in the CkMulticast library. When a new spanning tree is rebuilt, an
 updated CkSectionInfo is passed along with a multicast message, so it is
 recommended that CkGetSectionInfo() function is always called when a
 multicast message arrives (as shown in the above SayHi example).
@@ -6365,11 +7036,11 @@ to delegate [13]_ sections to custom libraries (called delegation
 managers). Note that group sections are not automatically delegated to
 CkMulticast and hence must be manually delegated to this library to
 benefit from the optimized multicast tree implementation. This is
-explained in this section, and see examples/charm++/groupsection for an
+explained here, and see ``examples/charm++/groupsection`` for an
 example.
 
 While creating a chare array one can set the auto delegation flag to
-false in CkArrayOptions and the runtime system will not use the default
+``false`` in CkArrayOptions and the runtime system will not use the default
 CkMulticast library. A CkMulticastMgr (or any other delegation manager)
 group can then be created by the user, and any section delegated to it.
 
@@ -6394,7 +7065,7 @@ managers):
 
 One can also set the default branching factor when creating a
 CkMulticastMgr group. Sections created via this manager will use the
-specified branching factor for their multicast tree. For example,
+specified branching factor for their multicast tree. For example:
 
 .. code-block:: c++
 
@@ -6458,7 +7129,7 @@ BaseChare, then the derived chare of type DerivedChare needs to be
 declared in the Charm++ interface file to be explicitly derived from
 BaseChare. Thus, the constructs in the ``.ci`` file should look like:
 
-.. code-block:: c++
+.. code-block:: charmci
 
      chare BaseChare {
        entry BaseChare(someMessage *);
@@ -6538,7 +7209,7 @@ Inheritance for Messages
 Messages cannot inherit from other messages. A message can, however,
 inherit from a regular C++ class. For example:
 
-.. code-block:: c++
+.. code-block:: charmci
 
     // In the .ci file:
     message BaseMessage1;
@@ -6587,7 +7258,7 @@ described below.
 
 A message template might be declared as follows:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    module A {
      template <class DType, int N=3>
@@ -6688,7 +7359,7 @@ instantiation is desired.
 For the message and chare templates described above, a few
 instantiations might look like
 
-.. code-block:: c++
+.. code-block:: charmci
 
    module D {
      extern module A;
@@ -6706,7 +7377,7 @@ because they must specify the chare class containing them. The template
 arguments are also specified directly in the method’s parameters, rather
 than as distinct template arguments.
 
-.. code-block:: c++
+.. code-block:: charmci
 
    module E {
      extern module D;
@@ -6862,7 +7533,7 @@ every node, you can safely store the CkReduction::reducerType in a
 global or class-static variable. For the example above, the reduction
 function is registered and used in the following manner:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // In the .ci file:
    initnode void registerSumTwoShorts(void);
@@ -7189,7 +7860,8 @@ concrete subclasses require these four features:
 
 -  A migration constructor — a constructor that takes ``CkMigrateMessage *``.
    This is used to create the new object on the receive side,
-   immediately before calling the new object's pup routine.
+   immediately before calling the new object's pup routine. Users should not free
+   the CkMigrateMessage.
 
 -  A working, virtual ``pup`` method. You can omit this if your class has no
    data that needs to be packed.
@@ -7208,7 +7880,7 @@ needed.
 For example, if *parent* is a concrete superclass, and *child* and *tchild* are
 its subclasses:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // --------- In the .ci file ---------
    PUPable parent;
@@ -7348,7 +8020,7 @@ can be kept and the object used indefinitely.
 For example, if the entry method bar needs a ``PUP::able`` parent object for
 in-call processing, you would use a ``CkReference`` like this:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // --------- In the .ci file ---------
    entry void barRef(int x, CkReference<parent> p);
@@ -7361,7 +8033,7 @@ in-call processing, you would use a ``CkReference`` like this:
 If the entry method needs to keep its parameter, use a ``CkPointer`` like
 this:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    // --------- In the .ci file ---------
    entry void barPtr(int x, CkPointer<parent> p);
@@ -7689,12 +8361,27 @@ The API to checkpoint the application is:
 
 .. code-block:: c++
 
-     void CkStartCheckpoint(char* dirname, const CkCallback& cb);
+     void CkStartCheckpoint(char* dirname, const CkCallback& cb, bool
+     requestStatus = false, int writersPerNode = 0);
 
 The string ``dirname`` is the destination directory where the checkpoint
 files will be stored, and ``cb`` is the callback function which will be
 invoked after the checkpoint is done, as well as when the restart is
-complete. Here is an example of a typical use:
+complete. If ``CkStartCheckpoint`` is called again before ``cb`` has
+been called, the new request may be silently dropped. When the
+optional parameter ``requestStatus`` is true, the callback ``cb`` is
+sent a message of type ``CkCheckpointStatusMsg`` which includes an
+``int status`` field of value ``CK_CHECKPOINT_SUCCESS`` or
+``CK_CHECKPOINT_FAILURE`` indicating the success of the checkpointing
+operation. ``writersPerNode`` is an optional parameter that controls
+the number of PEs per logical node simultaneously allowed to write
+checkpoints. By default, it allows all PEs on a node to write at once,
+but should be tuned for large runs to avoid overloading the
+filesystem. Once set, this value persists for future calls to
+``CkStartCheckpoint``, so it does not need to be provided on every
+invocation (specifying 0 also leaves it at its current value).
+
+Here is an example of a typical use:
 
 .. code-block:: c++
 
@@ -7711,15 +8398,32 @@ timestep. To save resources, the PUP routine can well omit the 8
 intermediate matrices and checkpoint the matrix with the final results
 of each timestep.
 
-Group, nodegroup (Section :numref:`sec:group`) and singleton chare
+Group, nodegroup (Section :numref:`sec:group`), and singleton chare
 objects are normally not meant to be migrated. In order to checkpoint
 them, however, the user has to write PUP routines for the groups and
 chare and declare them as ``[migratable]`` in the .ci file. Some
 programs use *mainchares* to hold key control data like global object
-counts, and thus mainchares need to be checkpointed too. To do this, the
-programmer should write a PUP routine for the mainchare and declare them
-as ``[migratable]`` in the .ci file, just as in the case of Group and
-NodeGroup.
+counts, and thus mainchares need to be checkpointed too. To do this,
+the programmer should write a PUP routine for the mainchares and
+declare them as ``[migratable]`` in the .ci file, just as in the case
+of group and nodegroup.
+
+Variables marked as readonly are automatically checkpointed and
+restored by the runtime system, so user PUP routines do not need to
+explicitly handle them.
+
+Checkpointing variables of type ``CProxy_*`` is completely valid.
+After the restart callback is invoked, the original chare structures
+will have been reconstructed and all proxy variables will be valid
+references to the restarted versions of whatever they originally
+referred to. The only caveat to this is when the application is
+restarted on a different number of processors than it was checkpointed
+on, in which case non-location invariant chares have special behavior:
+singleton chares are not created or restored at all and
+group/nodegroup chares are created per PE/node, but each
+group/nodegroup element is restored from the checkpoint corresponding
+to the element originally on PE/node 0. This does not effect
+mainchares, which are always restarted on PE 0.
 
 The checkpoint must be recorded at a synchronization point in the
 application, to ensure a consistent state upon restart. One easy way to
@@ -7730,6 +8434,12 @@ call to initiate the checkpoint.
 After ``CkStartCheckpoint`` is executed, a directory of the designated
 name is created and a collection of checkpoint files are written into
 it.
+
+.. note::
+   Note that checkpoints are written to and read from several
+   automatically created subdirectories of the specified directory in
+   order to avoid creating too many files in the same directory, which
+   can stress the file system.
 
 Restarting
 ^^^^^^^^^^
@@ -7748,6 +8458,17 @@ restarting the old checkpoint on a different number of physical
 processors. This provides the flexibility to expand or shrink your
 application when the availability of computing resources changes.
 
+When restarting, the runtime system recreates the state of the
+application based on the recorded log files, first restoring readonly
+variables, then mainchares, then singleton chares (only when the
+number of PEs in the restart matches the original number of PEs), then
+groups, then nodegroups, then chare arrays. Dependencies in group
+creation are implicitly respected since groups are recreated in the
+same order as they were originally created in on every PE (the same
+holds for nodegroups). Finally, when the state has been restored, the
+callback specified when the checkpoint was created is executed,
+restarting the application.
+
 Note that on restart, if an array or group reduction client was set to a
 static function, the function pointer might be lost and the user needs
 to register it again. A better alternative is to always use an entry
@@ -7765,9 +8486,13 @@ previous one at checkpoint time, so running a load balancer (see
 Section :numref:`loadbalancing`) after restart is suggested.
 
 If restart is not done on the same number of processors, the
-processor-specific data in a group/nodegroup branch cannot (and usually
-should not) be restored individually. A copy from processor 0 will be
-propagated to all the processors.
+processor-specific data in a group/nodegroup branch cannot (and
+usually should not) be restored individually. A copy from processor 0
+will be propagated to all the processors. Additionally, singleton
+chares will not be restored at all in this case, so they must be
+specially handled when restarting on a different number of processors.
+One can, for example, explicitly test for a new number of PEs when
+unpacking and reconstruct singleton objects in that case.
 
 Choosing What to Save
 ^^^^^^^^^^^^^^^^^^^^^
@@ -7969,7 +8694,7 @@ a MPI+OpenMP hybrid program, Charm++ will work perfectly with any
 shared-memory parallel programming languages (e.g. OpenMP). As with
 ordinary OpenMP applications, the number of threads used in the OpenMP
 parts of the program can be controlled with the ``OMP_NUM_THREADS``
-environment variable. See Sec. :numref:`charmrun` for details on how
+environment variable. See Section :numref:`charmrun` for details on how
 to propagate such environment variables.
 
 If there are no spare cores allocated, to avoid resource contention, a
@@ -8148,7 +8873,7 @@ for example:
 
 .. code-block:: bash
 
-   $ $CHARM_DIR/build charm++ multicore-linux64 omp
+   $ $CHARM_DIR/build charm++ multicore-linux-x86_64 omp
    $ $CHARM_DIR/build charm++ netlrts-linux-x86_64 smp omp
 
 This library is based on the LLVM OpenMP runtime library. So it supports
@@ -8192,7 +8917,7 @@ to avoid the error:
    $ sudo ln -svT /usr/bin/clang-3.8 /usr/bin/clang
    $ sudo ln -svT /usr/bin/clang++-3.8 /usr/bin/clang
 
-   $ $CHARM_DIR/build charm++ multicore-linux64 clang omp --with-production -j8
+   $ $CHARM_DIR/build charm++ multicore-linux-x86_64 clang omp --with-production -j8
    $ echo '!<arch>' > $(CHARM_DIR)/lib/libomp.a  # Dummy library. This will make you avoid the error message.
 
 On Mac, the Apple-provided clang installed in default doesn’t have
@@ -8206,7 +8931,7 @@ to the invocation of the Charm++ build script. For example:
 
 .. code-block:: bash
 
-   $ $CHARM_DIR/build charm++ multicore-linux64 omp gcc-7
+   $ $CHARM_DIR/build charm++ multicore-linux-x86_64 omp gcc-7
    $ $CHARM_DIR/build charm++ netlrts-linux-x86_64 smp omp gcc-7
 
 If this does not work, you should set environment variables so that the
@@ -8385,7 +9110,270 @@ following example shows how this API can be used.
 
    CkSetPeHelpsOtherThreads(1);
 
-.. _sec:interop:
+.. _sec-gpu:
+
+GPU Support
+-----------
+
+Overview
+~~~~~~~~
+
+GPUs are throughput-oriented devices with peak computational
+capabilities that greatly surpass equivalent-generation CPUs but with
+limited control logic. This currently constrains them to be used as
+accelerator devices controlled by code on the CPU. Traditionally,
+programmers have had to either (a) halt the execution of work on the CPU
+whenever issuing GPU work to simplify synchronization or (b) issue GPU
+work asynchronously and carefully manage and synchronize concurrent GPU
+work in order to ensure progress and good performance. The latter becomes
+significantly more difficult with overdecomposition as in Charm++, where
+numerous concurrent objects launch computational kernels and initiate
+data transfers on the GPU.
+
+The support for GPUs in the Charm++ runtime system consist of the
+**GPU Manager** module and **Hybrid API (HAPI)**. HAPI exposes the core
+functionalities of GPU Manager to the Charm++ user. Currently only NVIDIA GPUs
+(and CUDA) are supported, although we are actively working on providing
+support for AMD and Intel GPUs as well. CUDA code can be integrated in
+Charm++ just like any C/C++ program to offload computational kernels,
+but when used naively, performance will most likely be far from ideal.
+This is because overdecomposition, a core concept of Charm++, creates
+relatively fine-grained objects and tasks that needs support from the
+runtime to be executed efficiently.
+
+We strongly recommend using CUDA Streams to assign one more streams
+to each chare, so that multiple GPU operations initiated by different
+chares can be executed concurrently when possible. Concurrent Kernel
+Execution in CUDA allows kernels in different streams to execute
+concurrently on the device unless a single kernel uses all of the available
+GPU resources. It should be noted that concurrent data transfers (even when
+they are in different streams) are limited by the number of DMA engines
+on the GPU, and most current GPUs have only one engine per direction
+(host-to-device, device-to-host).
+
+In addition to using CUDA Streams to maximize concurrency, another
+important consideration is avoiding synchronization calls such as
+``cudaStreamSynchronize`` or ``cudaDeviceSynchronize``. This is because
+the chare that has just enqueued some work to the GPU should yield the
+PE, in order to allow other chares waiting on the same PE to execute.
+Because of the message-driven execution pattern in Charm++, it is infeasible
+for the user to asynchronously detect when a GPU operation completes,
+either by manually polling the GPU or adding a CUDA Callback to the stream.
+One of the core functionalities of GPU Manager is supporting this asynchronous
+detection, which allows a Charm++ callback to be invoked when all previous
+operations in a specified CUDA stream complete. This is exposed to the
+user via a HAPI call, which is demonstrated in the usage section below.
+
+Enabling GPU Support
+~~~~~~~~~~~~~~~~~~~~
+
+GPU support via GPU Manager and HAPI is not included by default when
+building Charm++. Use ``build`` with the ``cuda`` option to build Charm++
+with GPU support (CMake build is currently not supported), e.g.
+
+.. code-block:: bash
+
+   $ ./build charm++ netlrts-linux-x86_64 cuda -j8 --with-production
+
+Building with GPU support requires an installation of the CUDA Toolkit on the
+system, which is automatically found by the build script. If the script fails
+to find it, provide the path as one of ``CUDATOOLKIT_HOME``, ``CUDA_DIR``,
+or ``CUDA_HOME`` environment variables.
+
+Using GPU Support through HAPI
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+As explained in the Overview section, use of CUDA streams is strongly
+recommended. This provides the opportunity for kernels offloaded by chares
+to execute concurrently on the GPU.
+
+In a typical Charm++ application using CUDA, the ``.C`` and ``.ci`` files
+would contain the Charm++ code, whereas a ``.cu`` file would contain the
+definition of CUDA kernels and functions that serve as entry points
+from the Charm++ application to use GPU capabilities. Calls to CUDA and/or
+HAPI to invoke kernels, perform data transfers, or enqueue detection for
+GPU work completion would be placed inside this file, although they could
+also be put in the ``.C`` file provided that the right header files are
+included (``<cuda_runtime.h>`` and/or ``"hapi.h"``). The user should make sure
+that the CUDA kernels are compiled by ``nvcc``, however.
+
+After the necessary GPU operations are enqueued in the appropriate CUDA stream,
+the user would call ``hapiAddCallback`` to have a Charm++ callback to be invoked
+when all previous operations in the stream complete. For example,
+``hapiAddCallback`` can be called after a kernel invocation and a device-to-host
+data transfer to asynchronously 'enqueue' a Charm++ callback that prints out
+the data computed by the GPU to ``stdout``. The GPU Manager module ensures
+that the Charm++ callback will only be invoked once the GPU kernel and
+device-to-host data transfer complete.
+
+The following is a list of HAPI functions:
+
+.. code-block:: c++
+
+   void hapiAddCallback(cudaStream_t stream, CkCallback* callback);
+
+   void hapiCreateStreams();
+   cudaStream_t hapiGetStream();
+
+   void* hapiPoolMalloc(int size);
+   void hapiPoolFree(void* ptr);
+
+   hapiCheck(code);
+
+``hapiCreateStreams`` creates as many streams as the maximum number of
+concurrent kernels supported by the GPU device. ``hapiGetStream`` hands
+out a stream created by the runtime in a round-robin fashion.
+``hapiPool`` functions provides memory pool functionalities which are
+used to obtain/free device memory without interrupting the GPU.
+``hapiCheck`` is used to check if the input code block executes without
+errors. The provided code should return ``cudaError_t`` for it to work.
+
+Examples using CUDA and HAPI can be found under
+``examples/charm++/cuda``. Codes under ``#ifdef USE_WR`` use the
+``hapiWorkRequest`` scheme, which is now deprecated.
+
+Direct GPU Messaging
+~~~~~~~~~~~~~~~~~~~~
+
+Inspired by CUDA-aware MPI, the direct GPU messaging feature in Charm++
+attempts to reduce the latency and increase the bandwidth for inter-GPU
+data transfers by bypassing host memory. In Charm++, however, some
+metadata exchanges between the sender and receiver are required as the
+destination buffer is not known by the sender. Thus our approach is
+based on the Zero Copy Entry Method Post API (section :numref:`nocopyapi`),
+where the sender sends a metadata message containing the address of the
+source buffer on the GPU and the receiver posts an Rget from the source
+buffer to the destination buffer (also on the GPU).
+
+There are currently two implementations for direct GPU messaging:
+(1) CUDA memcpy and IPC based mechanism for intra-node communication
+(inter-node communication reverts back to a host-staging mechanism),
+and (2) UCX-based mechanism that supports both intra-node and inter-node
+communication. When Charm++ is built with the UCX machine layer
+and CUDA support (e.g., ucx-linux-x86_64-cuda), it will automatically use
+the UCX-based mechanism with the direct GPU messaging API.
+Other CUDA-enabled builds will only support
+the first mechanism and limit the use of direct GPU-GPU transfers within
+a single physical node. For inter-node messages, the runtime system will
+revert back to a host-staging mechanism where the GPU buffer is moved to
+host memory before being sent.
+The user APIs for both implementations remain the same, however, as detailed
+in the following.
+
+To send a GPU buffer with the direct GPU messaging feature, add a ``nocopydevice``
+specifier to the corresponding parameter of the receiver's entry method in the ``.ci`` file:
+
+.. code-block:: charmci
+
+   entry void foo(int size, nocopydevice double arr[size]);
+
+This entry method should be invoked on the sender by wrapping the
+source buffer with ``CkDeviceBuffer``, whose constructor takes a pointer
+to the source buffer, a Charm++ callback to be invoked once the transfer
+completes (optional), and a CUDA stream associated with the transfer
+(which is only used internally in the CUDA memcpy and IPC based implementation and is also optional):
+
+.. code-block:: c++
+
+   // Constructors of CkDeviceBuffer
+   CkDeviceBuffer(const void* ptr);
+   CkDeviceBuffer(const void* ptr, const CkCallback& cb);
+   CkDeviceBuffer(const void* ptr, cudaStream_t stream);
+   CkDeviceBuffer(const void* ptr, const CkCallback& cb, cudaStream_t stream);
+
+   // Call on sender
+   someProxy.foo(size, CkDeviceBuffer(buf, cb, stream));
+
+As with the Zero Copy Entry Method Post API, both the post entry method
+and regular entry method must be defined. In the post entry method,
+the user must specify the location of the destination GPU buffer,
+and the ``CkDeviceBufferPost`` parameter can be used to specify the CUDA stream
+where the CUDA data transfer will be enqueued (only used in the CUDA memcpy and IPC based mechanism):
+
+.. code-block:: c++
+
+   // Post entry method
+   void foo(int& size, double*& arr, CkDeviceBufferPost* post) {
+     arr = dest_buffer; // Inform the location of the destination buffer to the runtime
+     post[0].cuda_stream = stream; // Perform the data transfer in the specified CUDA stream
+   }
+
+   // Regular entry method
+   void foo(int size, double* arr) {
+     // Data has arrived in the destination GPU buffer
+     ...
+   }
+
+As with the host-side Zero Copy API, the regular entry method is executed by the runtime
+system after the GPU buffer has arrived at the destination.
+
+For non-UCX builds, a more optimized mechanism for inter-process communication using CUDA IPC, POSIX shared memory,
+and pre-allocated GPU communication buffers are available through runtime flags.
+This significantly reduces the overhead from creating and opening CUDA IPC handles,
+especially for small messages. ``+gpushm`` enables this optimization
+feature, ``+gpucommbuffer [size]`` specifies the size of the communication buffer
+allocated on each GPU (default is 64MB), and ``+gpuipceventpool`` determines the number of
+CUDA IPC events per PE (default is 16).
+
+Examples and benchmarks of the direct GPU messaging feature can be found in
+``examples/charm++/cuda/gpudirect`` and ``benchmarks/charm++/cuda/gpudirect``.
+
+Intra-node Persistent GPU Communication
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Persistent GPU communication is a feature designed to take advantage of the fact
+that the address and size of the source/destination buffers do not change in
+persistent communication. Such patterns are found in many applications, including
+iterative applications that exchange the same set of buffers between neighbors/peers
+at every iteration. This allows us to reduce the overheads involved with
+with direct GPU messaging, including the nature of the multi-hop mechanism and
+CUDA IPC setup, and directly issue ``cudaMemcpy`` calls at the message send sites
+(for a ``put`` type operation; a ``get`` type operation is also supported).
+In inter-process communication, CUDA IPC handles are created, exchanged
+and opened only once (this setup step can be performed again if the buffer addresses
+or sizes involved in the persistent communication change). Note that this feature
+is currently supported only for intra-node communication.
+
+Setup and communication routines are supported through ``CkDevicePersistent``:
+
+.. code-block:: c++
+
+   struct CkDevicePersistent {
+     // Constructors
+     CkDevicePersistent(const void* ptr, size_t size);
+     CkDevicePersistent(const void* ptr, size_t size, const CkCallback& cb);
+     CkDevicePersistent(const void* ptr, size_t size, cudaStream_t stream);
+     CkDevicePersistent(const void* ptr, size_t size, const CkCallback& cb, cudaStream_t stream);
+
+     void open(); // Creates an IPC handle for inter-process communication
+     void closes(); // Closes an opened IPC handle
+     void set_msg(void* msg); // Ties a Charm++ message to the stored callback
+     void get(CkDevicePersistent& src); // Initiates transfer from the specified source buffer
+     void put(CkDevicePersistent& dst); // Initiates transfer to the specified destination buffer
+   };
+
+``CkDevicePersistent`` objects should be created on both the sender and receiver chares,
+with the respective source and destination buffer addresses and sizes. The optional
+Charm++ callback object will be invoked once the communication using that persistent
+buffer is complete. For instance, if both sender and receiver ``CkDevicePersistent``
+objects have callbacks associated with them, the sender's callback will be invoked
+once the send operation is complete and when the user can reuse/free the associated buffer,
+and the receiver's callback will be invoked once the received data is available.
+The associated CUDA stream will be used in the ``cudaMemcpyAsync`` calls to asynchronously
+invoke the underlying data transfers, which are tracked to invoke the subsequent callbacks, if any.
+The ``open`` and ``close`` calls are required for CUDA IPC setup and teardown.
+``open`` should be called after the creation of the ``CkDevicePersistent`` object and before
+sending it to a communication peer, and ``close`` should be called when the persistent
+object will no longer be used or before migration.
+
+Once the ``CkDevicePersistent`` objects are created and ``open`` ed, they should be
+exchanged between the communication peers. After this setup stage, the objects'
+``get`` and ``put`` methods can be invoked freely to perform the desired communication.
+
+Examples using the intra-node persistent GPU communication can be found in
+``examples/charm++/cuda/gpudirect/persitent`` and ``examples/charm++/cuda/gpudirect/jacobi3d``.
+
+.. _sec:mpiinterop:
 
 Charm-MPI Interoperation
 ------------------------
@@ -8571,6 +9559,129 @@ two functions one after another.
 
 A small example of user driven interoperation can be found in
 ``examples/charm++/user-driven-interop``.
+
+.. _sec:kokkosinterop:
+
+Interoperation with Kokkos
+--------------------------
+
+Kokkos is a shared-memory parallel programming model in C++ developed by
+Sandia National Laboratories (https://github.com/kokkos/kokkos). It aims
+to provide 'performance portability' to HPC applications through
+abstractions for parallel execution and data management. For execution in
+distributed memory environments, however, other frameworks such as MPI
+must be used in conjunction, to enable multiple Kokkos processes running
+on potentially different physical nodes to communicate with each other.
+
+In this section, we explore the basic interoperability of Kokkos with
+Charm++. Currently there is no sophisticated integration scheme, Charm++
+only manages the communication between different Kokkos instances with
+each instance individually managing the parallel execution underneath.
+Example programs can be found in ``examples/charm++/shared_runtimes/kokkos/hello``
+and ``examples/charm++/shared_runtimes/kokkos/vecadd``.
+
+Compiling the Kokkos Library
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Kokkos supports multiple backends for parallel execution. We recommend
+OpenMP for multicore CPUs and CUDA for machines with GPUs. Because Kokkos
+can be built with more than one backend, it is preferrable to build both
+OpenMP and CUDA backends on GPU machines.
+
+To build Kokkos with the OpenMP backend, run the following commands from
+the Kokkos source folder:
+
+.. code-block:: bash
+
+   $ mkdir build-omp
+   $ cd build-omp
+   $ ../generate_makefile.bash --prefix=<absolute path to build-omp> --with-openmp
+                               --arch=<CPU architecture>
+   $ make -j kokkoslib
+   $ make install
+
+To build Kokkos with both OpenMP and CUDA backends (required for ``vecadd``
+example), use the following commands:
+
+.. code-block:: bash
+
+   $ mkdir build-cuda
+   $ cd build-cuda
+   $ generate_makefile.bash --prefix=<absolute path to build-cuda>
+                            --with-cuda=<path to CUDA toolkit>
+                            --with-cuda-options=enable_lambda
+                            --with-openmp --arch=<CPU arch>,<GPU arch>
+                            --compiler=<path to included NVCC wrapper>
+   $ make -j kokkoslib
+   $ make install
+
+For more compilation options, please refer to
+https://github.com/kokkos/kokkos/wiki/Compiling.
+
+Program Structure and Flow
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The basic programming pattern using Kokkos and Charm++ together for
+parallel execution in distributed memory environments is the following.
+We use a Charm++ nodegroup (which corresponds to a OS process) to
+encapsulate a Kokkos instance that will manage the parallel execution
+underneath. We initialize Kokkos using ``Kokkos::initialize()`` in the
+constructor of the nodegroup, and finalize it using ``Kokkos::finalize()``.
+Calls to the Kokkos parallel API such as ``Kokkos::parallel_for()`` can
+be made between these calls. Communication between the different Kokkos
+instances can be done via messages and entry method invocation among
+the nodegroup chares as in regular Charm++.
+
+.. _sec:rajainterop:
+
+Interoperation with RAJA
+------------------------
+
+RAJA is a shared-memory parallel programming model in C++ developed by
+Lawrence Livermore National Laboratory (https://github.com/LLNL/RAJA).
+RAJA shares similar goals and concepts with Kokkos (Section :numref:`sec:kokkosinterop`).
+
+In this section, we explore the basic interoperability of RAJA with
+Charm++. Currently there is no sophisticated integration scheme, Charm++
+only manages the communication between different RAJA instances with
+each instance individually managing the parallel execution underneath.
+Example programs can be found in ``examples/charm++/shared_runtimes/raja/hello``
+and ``examples/charm++/shared_runtimes/raja/vecadd``.
+
+Compiling the RAJA Library
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RAJA supports multiple backends for parallel execution. We recommend
+OpenMP for multicore CPUs and CUDA for machines with GPUs. Because RAJA
+can be built with more than one backend, it is preferable to build both
+OpenMP and CUDA backends on GPU machines.
+
+To build RAJA with both OpenMP and CUDA backends (required for ``vecadd``
+example), use the following commands:
+
+.. code-block:: bash
+
+   $ mkdir build && install
+   $ cd build
+   $ cmake -DENABLE_CUDA=On -DCMAKE_INSTALL_PREFIX=<path to RAJA install folder> ../
+   $ make -j
+   $ make install
+
+For more compilation options and assistance, please refer to the `RAJA User Guide
+<https://raja.readthedocs.io/en/master/>`_.
+
+Program Structure and Flow
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The basic programming pattern using RAJA and Charm++ together for
+parallel execution in distributed memory environments is the following.
+We use a Charm++ nodegroup (which corresponds to a OS process) to
+encapsulate a RAJA instance that will manage the parallel execution
+underneath. Calls to the RAJA parallel API such as ``RAJA::forall()`` can
+be made in a method of the nodegroup to perform parallel computation in
+shared memory. Communication between the different RAJA instances can be
+performed via messages and entry method invocation among the nodegroup
+chares as in regular Charm++.
 
 .. _sec:partition:
 
@@ -9004,6 +10115,12 @@ Charm++’s built-in strategies(see :numref:`lbStrategy`) for the best
 performance based on the characteristics of their applications. However,
 they can also choose to write their own load balancing strategies.
 
+Users are recommended to use the TreeLB structure to write new custom
+strategies if possible (see :numref:`lbWriteNewTreeLB`). Currently,
+TreeLB may not be suitable for distributed strategies, if
+communication graph information is needed, or when working with legacy
+strategies.
+
 The Charm++ load balancing framework provides a simple scheme to
 incorporate new load balancing strategies. The programmer needs to write
 their strategy for load balancing based on the instrumented ProcArray
@@ -9041,6 +10158,28 @@ referred.
    ProcArray and ObjGraph data structures to be used when writing a load
    balancing strategy
 
+Use your own load balancer
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Compile it in the form of a library and name it *libmoduleFooLB.a*
+where *FooLB* is the new load balancer. Add the path to the library
+and link the load balancer into an application using *-module FooLB*.
+
+You can create a library in the following way. This will create
+*libmoduleFooLB.a*.
+
+.. code-block:: bash
+
+   $ bin/charmc -o libmoduleFooLB.a FooLB.C
+
+To include this balancer in your application, the application's
+Makefile can be changed in the following way:
+
+.. code-block:: makefile
+
+   $(TARGET): $(OBJECTS)
+     $(CHARMC) -o $(TARGET) -L/path-to-the-lib $(OBJS) -module FooLB
+
 Incorporating this strategy into the Charm++ build framework is
 explained in the next section.
 
@@ -9072,6 +10211,50 @@ to the Charm++ build system:
 #. Run ``make depends`` to update dependence rule of Charm++ files. And
    run ``make charm++`` to compile Charm++ which includes the new load
    balancing strategy files.
+
+.. _lbWriteNewTreeLB:
+
+Writing a new load balancing strategy with TreeLB
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Writing a load balancing strategy with TreeLB is very simple. It involves
+implementing a class inheriting from the abstract ``Strategy`` class
+defined in the ``TreeStrategyBase.h`` header file. Specifically, the
+load balancing strategy needs to be implemented in the ``solve`` method,
+which receives objects and processors as vectors. The solution
+needs to be stored in the ``solution`` object using its
+``assign(O object, P pe)`` instance method and is used by the load
+balancing framework to perform object migrations accordingly. The
+``bool objSorted`` argument specifies whether the incoming vector of
+objects is sorted by load values or not. This new strategy can be written
+in a header file and must be included in the ``TreeStrategyFactory.h``
+header file along with the mapping of the strategy name and class to
+be invoked for the newly implemented strategy. It can then be used by
+linking a program with TreeLB and specifying the newly created
+strategy in the configuration file.
+
+.. code-block:: c++
+
+  namespace TreeStrategy
+  {
+  template <typename O, typename P, typename S>
+  class FooLB : public Strategy<O, P, S>
+  {
+  public:
+    void solve(std::vector<O>& objs, std::vector<P>& procs, S& solution, bool objsSorted)
+    {
+      // The strategy goes here.
+      // This is a simple example strategy that round-robin assigns objects to processors.
+      int index = 0;
+      for (const auto& o : objs)
+      {
+        P p = procs[index];
+        solution.assign(o, p); // update solution object
+        index = (index + 1) % procs.size();
+      }
+    }
+  };
+  }  // namespace TreeStrategy
 
 .. _lbdatabase:
 
@@ -9390,12 +10573,12 @@ mass of the particles with velocity greater than 1:
 
 .. code-block:: python
 
-   size = ck.read((``numparticles'', 0));
+   size = ck.read(("numparticles", 0));
    for i in range(0, size):
-       vel = ck.read((``velocity'', i));
-       mass = ck.read((``mass'', i));
+       vel = ck.read(("velocity", i));
+       mass = ck.read(("mass", i));
        mass = mass * 2;
-       if (vel > 1): ck.write((``mass'', i), mass);
+       if (vel > 1): ck.write(("mass", i), mass);
 
 Instead of all these read and writes, it will be better to be able to
 write:
@@ -9529,7 +10712,7 @@ python-compliant. This is done through the keyword python placed in
 square brackets before the object name in the .ci file. Some examples
 follow:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    mainchare [python] main {...}
    array [1D] [python] myArray {...}
@@ -9675,7 +10858,7 @@ can return an object as complex as needed.
 
 The method must have the following signature:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    entry [python] void highMethod(int handle);
 
@@ -10101,7 +11284,7 @@ To make a Charm++ application malleable, first, pup routines for all of
 the constructs in the application need to be written. This includes
 writing a pup routine for the ``mainchare`` and marking it migratable:
 
-.. code-block:: c++
+.. code-block:: charmci
 
    	mainchare [migratable]  Main { ... }
 
@@ -10174,13 +11357,13 @@ Downloading Charm++
 
 Charm++ can be downloaded using one of the following methods:
 
--  From Charm++ website - The current stable version (source code and
+-  From the Charm++ website - The current stable version (source code and
    binaries) can be downloaded from our website at
-   *http://charm.cs.illinois.edu/software*.
+   *https://charm.cs.illinois.edu/software*.
 
 -  From source archive - The latest development version of Charm++ can
    be downloaded from our source archive using *git clone
-   http://charm.cs.illinois.edu/gerrit/charm*.
+   https://github.com/UIUC-PPL/charm*.
 
 If you download the source code from the website, you will have to
 unpack it using a tool capable of extracting gzip’d tar files, such as
@@ -10195,19 +11378,30 @@ Installation
 A typical prototype command for building Charm++ from the source code
 is:
 
-``./build <TARGET> <TARGET ARCHITECTURE> [OPTIONS]`` where,
+.. code-block:: bash
 
-TARGET
+   $ ./build <TARGET> <TARGET ARCHITECTURE> [OPTIONS]
+
+where,
+
+``TARGET``
    is the framework one wants to build such as *charm++* or *AMPI*.
 
-TARGET ARCHITECTURE
+``TARGET ARCHITECTURE``
    is the machine architecture one wants to build for such as
    *netlrts-linux-x86_64*, *pamilrts-bluegeneq* etc.
 
-OPTIONS
+``OPTIONS``
    are additional options to the build process, e.g. *smp* is used to
    build a shared memory version, *-j8* is given to build in parallel
    etc.
+
+.. note::
+
+   Starting from version 7.0, Charm++ uses the CMake-based build system
+   when building with the ``./build`` command. To use the old configure-based
+   build system, you can build with the ``./buildold`` command with the same
+   options. We intend to remove the old build system in Charm++ 7.1.
 
 In Table :numref:`tab:buildlist`, a list of build
 commands is provided for some of the commonly used systems. Note that,
@@ -10230,25 +11424,29 @@ appropriate choices for the build one wants to perform.
    ================================================================ =====================================================================
    Machine                                                          Build command
    ================================================================ =====================================================================
-   Net with 32 bit Linux                                            ``./build charm++ netlrts-linux --with-production -j8``
    Multicore (single node, shared memory) 64 bit Linux              ``./build charm++ multicore-linux-x86_64 --with-production -j8``
    Net with 64 bit Linux                                            ``./build charm++ netlrts-linux-x86_64 --with-production -j8``
    Net with 64 bit Linux (intel compilers)                          ``./build charm++ netlrts-linux-x86_64 icc --with-production -j8``
    Net with 64 bit Linux (shared memory)                            ``./build charm++ netlrts-linux-x86_64 smp --with-production -j8``
    Net with 64 bit Linux (checkpoint restart based fault tolerance) ``./build charm++ netlrts-linux-x86_64 syncft --with-production -j8``
+   Net with 32 bit Linux                                            ``./build charm++ netlrts-linux-i386 --with-production -j8``
    MPI with 64 bit Linux                                            ``./build charm++ mpi-linux-x86_64 --with-production -j8``
    MPI with 64 bit Linux (shared memory)                            ``./build charm++ mpi-linux-x86_64 smp --with-production -j8``
    MPI with 64 bit Linux (mpicxx wrappers)                          ``./build charm++ mpi-linux-x86_64 mpicxx --with-production -j8``
    IBVERBS with 64 bit Linux                                        ``./build charm++ verbs-linux-x86_64 --with-production -j8``
    OFI with 64 bit Linux                                            ``./build charm++ ofi-linux-x86_64 --with-production -j8``
+   UCX with 64 bit Linux                                            ``./build charm++ ucx-linux-x86_64 --with-production -j8``
+   UCX with 64 bit Linux (AArch64)                                  ``./build charm++ ucx-linux-arm8 --with-production -j8``
    Net with 64 bit Windows                                          ``./build charm++ netlrts-win-x86_64 --with-production -j8``
    MPI with 64 bit Windows                                          ``./build charm++ mpi-win-x86_64 --with-production -j8``
-   Net with 64 bit Mac                                              ``./build charm++ netlrts-darwin-x86_64 --with-production -j8``
+   Net with 64 bit macOS (x86_64)                                   ``./build charm++ netlrts-darwin-x86_64 --with-production -j8``
+   Net with 64 bit macOS (ARM64)                                    ``./build charm++ netlrts-darwin-arm8 --with-production -j8``
    Blue Gene/Q (bgclang compilers)                                  ``./build charm++ pami-bluegeneq --with-production -j8``
    Blue Gene/Q (bgclang compilers)                                  ``./build charm++ pamilrts-bluegeneq --with-production -j8``
    Cray XE6                                                         ``./build charm++ gni-crayxe --with-production -j8``
    Cray XK7                                                         ``./build charm++ gni-crayxe-cuda --with-production -j8``
    Cray XC40                                                        ``./build charm++ gni-crayxc --with-production -j8``
+   Cray Shasta                                                      ``./build charm++ ofi-crayshasta --with-production -j8``
    ================================================================ =====================================================================
 
 As mentioned earlier, one can also build Charm++ using the precompiled
@@ -10262,13 +11460,15 @@ path would be ``netlrts-linux-x86_64/tmp``. On Linux and macOS, the tmp
 symlink in the top-level charm directory also points to the tmp
 directory of the most recent build.
 
-Alternatively, CMake can be used for configuring and building Charm++.
+Alternatively, CMake can be used directly for configuring and building Charm++.
 You can use ``cmake-gui`` or ``ccmake`` for an overview of available
 options. Note that some are only effective when passed with ``-D`` from
 the command line while configuring from a blank slate. To build with all
 defaults, ``cmake .`` is sufficient, though invoking CMake from a
 separate location (ex:
-``mkdir mybuild && cd mybuild && cmake ../charm``) is recommended.
+``mkdir mybuild && cd mybuild && cmake ..``) is recommended.
+Please see Section :numref:`sec:cmakeinstall` for building Charm++
+directly with CMake.
 
 Installation through the Spack package manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -10311,39 +11511,68 @@ select another version with the ``@`` option (for example,
 
    	$ spack install charmpp@develop
 
+
+.. _sec:cmakeinstall:
+
+Installation with CMake
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Charm++ can be installed directly with the CMake tool,
+version 3.4 or newer, without using the ``./build`` command.
+
+After downloading and unpacking Charm++, it can be installed in the following way:
+
+.. code-block:: bash
+
+   $ cd charm
+   $ mkdir build-cmake
+   $ cd build-cmake
+   $ cmake ..
+   $ make -j4
+
+
+By default, CMake builds the netlrts version.
+Other configuration options can be specified in the cmake command above.
+For example, to build Charm++ and AMPI on top of the MPI layer with SMP, the following command can be used:
+
+.. code-block:: bash
+
+   $ cmake .. -DNETWORK=mpi -DSMP=on -DTARGET=AMPI
+
+
 Charm++ installation directories
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The main directories in a Charm++ installation are:
 
-charm/bin
+``charm/bin``
    Executables, such as charmc and charmrun, used by Charm++.
 
-charm/doc
+``charm/doc``
    Documentation for Charm++, such as this document. Distributed as
-   LaTeX source code; HTML and PDF versions can be built or downloaded
-   from our web site.
+   reStructuredText (RST or ReST) source code; HTML and PDF versions can be
+   built or downloaded from our web site.
 
-charm/include
+``charm/include``
    The Charm++ C++ and Fortran user include files (.h).
 
-charm/lib
+``charm/lib``
    The static libraries (.a) that comprise Charm++.
 
-charm/lib_so
+``charm/lib_so``
    The shared libraries (.so/.dylib) that comprise Charm++, if Charm++
    is compiled with the ``-build-shared`` option.
 
-charm/examples
+``charm/examples``
    Example Charm++ programs.
 
-charm/src
+``charm/src``
    Source code for Charm++ itself.
 
-charm/tmp
+``charm/tmp``
    Directory where Charm++ is built.
 
-charm/tests
+``charm/tests``
    Test Charm++ programs used by autobuild.
 
 Reducing disk usage
@@ -10352,6 +11581,141 @@ Reducing disk usage
 The charm directory contains a collection of example-programs and
 test-programs. These may be deleted with no other effects. You may also
 ``strip`` all the binaries in ``charm/bin``.
+
+Installation for Specific Builds
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+UCX
+^^^
+UCX stands for Unified Communication X and is a high performance communication
+library that can be used as a backend networking layer for Charm++ builds on
+supported transports like Mellanox Infiniband, Intel Omni-Path, Cray GNI, TCP/IP, etc.
+
+In order to install Charm++ with the UCX backend, UCX or HPC-X modules are required
+in your environment. In case UCX and HPC-X are not available in your environment,
+you can build UCX from scratch using the following steps:
+
+.. code-block:: bash
+
+   $ git clone https://github.com/openucx/ucx.git
+   $ cd ucx
+   $ ./autogen.sh
+   $ ./contrib/configure-release --prefix=$HOME/ucx/build
+   $ make -j8
+   $ make install
+
+After installing UCX, there are several supported process management interfaces (PMI)
+that can be specified as options in order to build Charm++ with UCX. These include
+Simple PMI, Slurm PMI, Slurm PMI 2, and PMIx (included in OpenMPI or OpenPMIx). Currently, in order to
+use PMIx for process management, it is required to have either OpenMPI or OpenPMIx installed on the system.
+Additionally, in order to use the other supported process management interfaces, it is
+required to have a non-OpenMPI based MPI implementation installed on the system (e.g.
+Intel MPI, MVAPICH, MPICH, etc.).
+
+It should be noted that the **PMIx** version is the *most stable* version of using the UCX backend.
+We're in the process of debugging some recent issues with Simple PMI, Slurm PMI and Slurm PMI2.
+
+The following section shows examples of build commands that can be used to build targets
+with the UCX backend using different process management interfaces. It should be noted that
+unless UCX is installed in a system directory, in order for Charm++ to find the UCX installation,
+it is required to pass the UCX build directory as ``--basedir``.
+
+**Simple PMI, Slurm PMI and Slurm PMI 2**
+
+To build the Charm++ target with Simple PMI, do not specify any additional option as shown
+in the build command.
+
+.. code-block:: bash
+
+   $ ./build charm++ ucx-linux-x86_64 --with-production --enable-error-checking --basedir=$HOME/ucx/build -j16
+
+To build the Charm++ target with Slurm PMI, specify ``slurmpmi`` in the build command.
+
+.. code-block:: bash
+
+   $ ./build charm++ ucx-linux-x86_64 slurmpmi --with-production --enable-error-checking --basedir=$HOME/ucx/build -j16
+
+Similarly, to build the Charm++ target with Slurm PMI 2, specify ``slurmpmi2`` in the build command.
+
+.. code-block:: bash
+
+   $ ./build charm++ ucx-linux-x86_64 slurmpmi2 --with-production --enable-error-checking --basedir=$HOME/ucx/build -j16
+
+**PMIx (OpenPMIx or as included in OpenMPI)**
+
+To build the Charm++ target with PMIx, you can either use OpenPMIx directly or use the version of
+PMIx included in OpenMPI. Note that PMIx is no longer included in OpenMPI distributions
+as of v4.0.5, so we recommend building with OpenPMIx instead.
+
+To use OpenPMIx directly, you first need to install libevent (https://github.com/libevent/libevent)
+if it's not available on your system:
+
+.. code-block:: bash
+
+   $ wget https://github.com/libevent/libevent/releases/download/release-2.1.12-stable/libevent-2.1.12-stable.tar.gz
+   $ tar -xf libevent-2.1.12-stable.tar.gz
+   $ cd libevent-2.1.12-stable
+   $ ./configure --prefix=$HOME/libevent-2.1.12-stable/build
+   $ make -j
+   $ make install
+
+Then you can download and build OpenPMIx as follows:
+
+.. code-block:: bash
+
+   $ wget https://github.com/openpmix/openpmix/releases/download/v3.1.5/pmix-3.1.5.tar.gz
+   $ tar -xf pmix-3.1.5.tar.gz
+   $ cd pmix-3.1.5
+   $ ./configure --prefix=$HOME/pmix-3.1.5/build --with-libevent=$HOME/libevent-2.1.12-stable/build
+   $ make -j
+   $ make install
+
+Finally, Charm++ with the UCX backend can be built with OpenPMIx using the following command
+(with the OpenPMIx installation passed as an additional ``--basedir`` argument):
+
+.. code-block:: bash
+
+   $ ./build charm++ ucx-linux-x86_64 openpmix --with-production --enable-error-checking --basedir=$HOME/ucx/build --basedir=$HOME/pmix-3.1.5/build -j
+
+It should be noted that in the absence of a working launcher such as ``jsrun``, an MPI distribution
+such as OpenMPI may also be required to run Charm++ applications built with the UCX backend
+and OpenPMIx. Since you no longer need PMIx included with OpenMPI, any version of OpenMPI can be built
+(including v4.0.5 and later) with your build of OpenPMIx using the ``--with-pmix`` flag,
+such as the following:
+
+.. code-block:: bash
+
+   $ wget https://download.open-mpi.org/release/open-mpi/v4.0/openmpi-4.0.5.tar.gz
+   $ tar -xf openmpi-4.0.5.tar.gz
+   $ cd openmpi-4.0.5
+   $ ./configure --enable-mca-no-build=btl-uct --with-pmix=$HOME/pmix-3.1.5/build --prefix=$HOME/openmpi-4.0.5/build
+   $ make -j
+   $ make install
+
+Before executing a Charm++ program, you may need to check that ``LD_LIBRARY_PATH`` and ``PATH``
+are set to include OpenPMIx (and OpenMPI, if needed).
+
+To use PMIx included with OpenMPI, an OpenMPI implementation with PMIx enabled is required
+to be installed on your system. As a reminder, PMIx is no longer included in OpenMPI
+distributions of v4.0.5 or later. In case OpenMPI is not available in your environment,
+you can build OpenMPI from scratch using the following steps:
+
+.. code-block:: bash
+
+   $ wget https://download.open-mpi.org/release/open-mpi/v4.0/openmpi-4.0.1.tar.gz
+   $ tar -xvf openmpi-4.0.1.tar.gz
+   $ cd openmpi-4.0.1
+   $ ./configure --enable-install-libpmix --prefix=$HOME/openmpi-4.0.1/build
+   $ make -j24
+   $ make install all
+
+After installing OpenMPI or using the pre-installed OpenMPI, you can build the Charm++ target with
+the UCX backend by specifying ``ompipmix`` in the build command and passing the OpenMPI installation
+path as ``--basedir`` (in addition to passing the UCX build directory):
+
+.. code-block:: bash
+
+   $ ./build charm++ ucx-linux-x86_64 ompipmix --with-production --enable-error-checking --basedir=$HOME/ucx/build --basedir=$HOME/openmpi-4.0.1/build -j16
 
 .. _sec:compile:
 
@@ -10370,8 +11734,8 @@ below. The options are described next.
 
 .. code-block:: none
 
-    * Compile C                            charmc -o pgm.o pgm.c
-    * Compile C++                          charmc -o pgm.o pgm.C
+    * Compile C                            charmc -o pgm.o -c pgm.c
+    * Compile C++                          charmc -o pgm.o -c pgm.C
     * Link                                 charmc -o pgm   obj1.o obj2.o obj3.o...
     * Compile + Link                       charmc -o pgm   src1.c src2.ci src3.C
     * Create Library                       charmc -o lib.a obj1.o obj2.o obj3.o...
@@ -10458,7 +11822,7 @@ The following command-line options are available to users of charmc:
    always. This option causes charmc to switch to the most reliable
    compiler, regardless of whether it produces slow code or not.
 
-``-language {converse|charm++|ampi|fem|f90charm}``:
+``-language {converse|charm++|ampi|f90charm}``:
    When linking with charmc, one must specify the “language”. This is
    just a way to help charmc include the right libraries. Pick the
    “language” according to this table:
@@ -10586,6 +11950,17 @@ minimal level to avoid flooding the terminal with unimportant
 information. However, if you encounter trouble launching a job, try
 using the ``++verbose`` option to help diagnose the issue. (See the
 ``++quiet`` option to suppress output entirely.)
+
+Parameters that function as boolean flags within Charmrun (taking no
+other parameters) can be prefixed with "no-" to negate their effect.
+For example, ``++no-scalable-start``.
+
+.. note::
+
+   When running on OFI platforms such as Cray Shasta, the OFI runtime parameter
+   ``+ofi_runtime_tcp`` may be required. By default, the exchange of EP names at
+   startup is done via both PMI and OFI. With this flag, it is only done via
+   PMI.
 
 .. _command line options:
 
@@ -10932,6 +12307,13 @@ are available:
    ``0-15:4.3``. ``++ppn 10 +pemap 0-11:6.5+12`` equals
    ``++ppn 10 +pemap 0,12,1,13,2,14,3,15,4,16,6,18,7,19,8,20,9,21,10,22``
 
+   By default, this option accepts PU indices assigned by the OS. The
+   user might want to instead provide logical PU indices used by hwloc
+   (see `link <https://www.open-mpi.org/projects/hwloc/doc/v2.1.0/a00342.php#faq_indexes>`
+   for details). To do this, prepend the sequence with an alphabet L
+   (case-insensitive). For instance, ``+pemap L0-3`` will instruct the
+   runtime to bind threads to PUs with logical indices 0-3.
+
 ``+commap p[,q,...]``
    Bind communication threads to the listed cores, one per process.
 
@@ -11115,6 +12497,23 @@ directory. Pathname resolution is performed as follows:
 #. The system tries to locate this program (with modified pathname and
    appended extension if specified) on all nodes.
 
+
+Instructions to run Charm++ programs for Specific Builds
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+UCX
+^^^
+When Charm++ is built with UCX using Simple PMI, Slurm PMI or Slurm PMI2, ensure that
+an MPI implementation which is not OpenMPI is loaded in the environment. Use the mpirun
+launcher provided by the non-OpenMPI implementation to launch programs. Alternatively, you
+can also use any system provided launchers.
+
+When Charm++ is built with UCX using PMIx, ensure that an OpenMPI implementation is loaded
+in the environment. Use the mpiexec/mpirun launcher provided with OpenMPI to launch programs.
+
+Note that due to bug #2477, binaries built with UCX cannot be run in standalone mode i.e without
+a launcher.
+
 .. _sec:keywords:
 
 Reserved words in ``.ci`` files
@@ -11175,13 +12574,19 @@ and cannot appear as variable or entry method names in a ``.ci`` file:
 
 -  nocopy
 
+-  nocopypost
+
+-  nocopydevice
+
+-  migratable
+
+-  python
+
 -  Entry method attributes
 
    -  stacksize
 
    -  threaded
-
-   -  migratable
 
    -  createhere
 
@@ -11207,15 +12612,13 @@ and cannot appear as variable or entry method names in a ``.ci`` file:
 
    -  notrace
 
-   -  python
+   -  accel (reserved for future/experimental use)
 
-   -  accel
+   -  readwrite (reserved for future/experimental use)
 
-   -  readwrite
+   -  writeonly (reserved for future/experimental use)
 
-   -  writeonly
-
-   -  accelblock
+   -  accelblock (reserved for future/experimental use)
 
    -  memcritical
 
@@ -11247,8 +12650,6 @@ and cannot appear as variable or entry method names in a ``.ci`` file:
 
    -  serial
 
-   -  forward
-
    -  when
 
    -  while
@@ -11262,10 +12663,6 @@ and cannot appear as variable or entry method names in a ``.ci`` file:
    -  else
 
    -  overlap
-
-   -  connect
-
-   -  publishes
 
 .. _sec:trace-projections:
 
@@ -11362,7 +12759,11 @@ tracemode:
 
 -  ``+gz-trace``: generate gzip (if available) compressed log files.
 
--  ``+gz-no-trace``: generate regular (not compressed) log files.
+-  ``+no-gz-trace``: generate regular (uncompressed) log files.
+
+-  ``+notracenested``: a debug option. Does not resume tracing outer
+   entry methods when entry methods are nested (as can happen with
+   ``[local]`` and ``[inline]`` calls.
 
 -  ``+checknested``: a debug option. Checks if events are improperly
    nested while recorded and issue a warning immediately.
@@ -11373,7 +12774,7 @@ tracemode:
 Tracemode ``summary``
 ^^^^^^^^^^^^^^^^^^^^^
 
-Compile option: ``-tracemode summary``
+Link time option: ``-tracemode summary``
 
 In this tracemode, execution time across all entry points for each
 processor is partitioned into a fixed number of equally sized
@@ -11736,8 +13137,8 @@ bear, without worrying that they will perturb execution to avoid the
 bug.
 
 Support for record-replay is enabled in common builds of Charm++. Builds
-with the ``--with-production`` option disable this support to reduce
-overhead. To record traces, simply run the program with an additional
+with either of the ``--with-production`` or ``--disable-tracing`` options
+disable record-replay support. To record traces, simply run the program with an additional
 command line-flag ``+record``. The generated traces can be repeated with
 the command-line flag ``+replay``. The full range of parallel and
 sequential debugging techniques are available to apply during
@@ -11870,6 +13271,8 @@ Acknowledgements
 
 -  Esteban Pauli
 
+-  Evan Ramos
+
 -  Filippo Gioachin
 
 -  Gengbin Zheng
@@ -11904,6 +13307,8 @@ Acknowledgements
 
 -  Juan Galvez
 
+-  Justin Szaday
+
 -  Kavitha Chandrasekar
 
 -  Laxmikant Kale
@@ -11913,6 +13318,8 @@ Acknowledgements
 -  Lukasz Wesolowski
 
 -  Mani Srinivas Potnuru
+
+-  Matthias Diener
 
 -  Michael Robson
 
@@ -11938,6 +13345,8 @@ Acknowledgements
 
 -  Parthasarathy Ramachandran
 
+-  Pathikrit Ghosh
+
 -  Phil Miller
 
 -  Prateek Jindal
@@ -11945,6 +13354,8 @@ Acknowledgements
 -  Pritish Jetley
 
 -  Puneet Narula
+
+-  Raghavendra Kanakagiri
 
 -  Rahul Joshi
 
@@ -11990,6 +13401,8 @@ Acknowledgements
 
 -  Timothy Knauff
 
+-  Venkatasubrahmanian Narayanan
+
 -  Vikas Mehta
 
 -  Viraj Paropkari
@@ -12003,6 +13416,8 @@ Acknowledgements
 -  Yan Shi
 
 -  Yogesh Mehta
+
+-  Zane Fink
 
 -  Zheng Shao
 

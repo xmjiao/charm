@@ -1,8 +1,8 @@
-/* 
+/*
 
-The following code is adapted from alltoall.c in mpich2-1.0.3 
+The following code is adapted from alltoall.c in mpich2-1.0.3
 
-Licensing details should be addresssed, since this is copyrighted. 
+Please see the romio/COPYRIGHT file for licensing information.
 
 */
 
@@ -123,6 +123,7 @@ int AMPI_Alltoall_long(
 						MPI_Datatype recvtype, 
 						MPI_Comm comm )
 {
+  AMPI_API("AMPI_Alltoall_long", sendbuf, sendcount, sendtype, recvbuf, recvcount, recvtype, comm);
 
   int          comm_size, i, pof2;
   MPI_Aint     sendtype_extent, recvtype_extent;
@@ -202,6 +203,7 @@ int AMPI_Alltoall_short(
 						 MPI_Datatype recvtype, 
 						 MPI_Comm comm )
 {
+  AMPI_API("AMPI_Alltoall_short", sendbuf, sendcount, sendtype, recvbuf, recvcount, recvtype, comm);
 
   int          comm_size, i, pof2;
   MPI_Aint     sendtype_extent, recvtype_extent;
@@ -363,6 +365,7 @@ int AMPI_Alltoall_medium(
 						  MPI_Datatype recvtype, 
 						  MPI_Comm comm )
 {
+  AMPI_API("AMPI_Alltoall_medium", sendbuf, sendcount, sendtype, recvbuf, recvcount, recvtype, comm);
 
   int          comm_size, i;
   MPI_Aint     sendtype_extent, recvtype_extent;

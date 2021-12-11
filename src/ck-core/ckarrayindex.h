@@ -163,27 +163,27 @@ class CkArrayIndex: public CkArrayIndexBase
          * @todo: Chee Wai Lee had a FIXME note attached to this method because he
          * felt it was a temporary solution
          */
-        CmiObjId *getProjectionID() const
+        CmiObjId getProjectionID() const
         {
-            CmiObjId *ret = new CmiObjId;
+            CmiObjId ret;
             int i;
             const int *data=this->data();
             if (OBJ_ID_SZ>=this->nInts)
             {
                 for (i=0;i<this->nInts;i++)
-                    ret->id[i]=data[i];
+                    ret.id[i]=data[i];
                 for (i=this->nInts;i<OBJ_ID_SZ;i++)
-                    ret->id[i]=0;
+                    ret.id[i]=0;
             }
             else
             {
-                //Must hash array index into LBObjid
                 int j;
+                //Must hash array index into LBObjid
                 for (j=0;j<OBJ_ID_SZ;j++)
-                    ret->id[j]=data[j];
+                    ret.id[j]=data[j];
                 for (i=0;i<this->nInts;i++)
                     for (j=0;j<OBJ_ID_SZ;j++)
-                        ret->id[j]+=circleShift(data[i],22+11*i*(j+1))+
+                        ret.id[j]+=circleShift(data[i],22+11*i*(j+1))+
                             circleShift(data[i],21-9*i*(j+1));
             }
             return ret;
@@ -276,6 +276,10 @@ public:
 		{ return (CkArray *)CkLocalBranch(_gid); }
 	static CkArray *CkLocalBranch(CkArrayID id)
 		{ return (CkArray *)::CkLocalBranch(id); }
+	CkArray *ckLocalBranchOther(int rank) const
+		{ return (CkArray *)CkLocalBranchOther(_gid, rank); }
+	static CkArray *CkLocalBranchOther(CkArrayID id, int rank)
+		{ return (CkArray *)::CkLocalBranchOther(id, rank); }
 	void pup(PUP::er &p) {p | _gid; }
 	bool operator == (const CkArrayID& other) const {
 		return (_gid == other._gid);
@@ -284,7 +288,6 @@ public:
         return (lhs._gid < rhs._gid);
     }
 };
-PUPmarshall(CkArrayID)
 
 typedef int CkIndex1D;
 typedef struct {int x,y;} CkIndex2D;
@@ -377,7 +380,7 @@ namespace ck {
         sum += b;
       }
 
-      if (sum > 48)
+      if (sum > CMK_OBJID_ELEMENT_BITS)
         return NULL;
 
       return new FixedArrayIndexCompressor(dims, bits);

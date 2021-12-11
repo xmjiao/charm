@@ -6,9 +6,11 @@
 #include <string.h>
 #include "machine.h"
 #include "converse.h"
+#include "cmirdmautils.h"
 #include "pcqueue.h"
 #include "assert.h"
 #include "malloc.h"
+#include <algorithm>
 
 #if CMK_BLUEGENEQ
 #include <hwi/include/bqc/A2_inlines.h>
@@ -58,7 +60,7 @@ char *ALIGN_32(char *p) {
 #define CMI_PAMI_ACK_DISPATCH             9
 #define CMI_PAMI_DISPATCH                10
 
-#ifdef CMK_BLUEGENEQ
+#if CMK_BLUEGENEQ
 #define SHORT_CUTOFF   128
 #define EAGER_CUTOFF   4096
 #else
@@ -795,7 +797,7 @@ void LrtsExit(int exitcode)
   }
 
   CmiNodeBarrier();
-  if(!CharmLibInterOperate || userDrivenMode) {
+  if(!CharmLibInterOperate) {
 #if CMK_SMP
     if (rank0) {
       // Wait for other threads (except me and the comm thread) to exit and join
@@ -1190,7 +1192,7 @@ void ack_pkt_dispatch (pami_context_t       context,
 
 #if ! CMK_MULTICAST_LIST_USE_COMMON_CODE
 
-void LrtsSyncListSendFn(int npes, int *pes, int size, char *msg) {
+void LrtsSyncListSendFn(int npes, const int *pes, int size, char *msg) {
   char *copymsg;
   copymsg = (char *)CmiAlloc(size);
   CmiMemcpy(copymsg,msg,size);
@@ -1206,7 +1208,7 @@ typedef struct ListMulticastVec_t {
 
 void machineFreeListSendFn(pami_context_t    context, 
     int               npes, 
-    int             * pes, 
+    const int       * pes,
     int               size, 
     char            * msg);
 
@@ -1218,7 +1220,7 @@ pami_result_t machineFreeList_handoff(pami_context_t context, void *cookie)
   return PAMI_SUCCESS;
 }
 
-void LrtsFreeListSendFn(int npes, int *pes, int size, char *msg) {
+void LrtsFreeListSendFn(int npes, const int *pes, int size, char *msg) {
   //printf("%d: In Free List Send Fn imm %d\n", CmiMyPe(), CmiIsImmediate(msg));
 
   CMI_SET_BROADCAST_ROOT(msg,0);
@@ -1251,7 +1253,7 @@ void LrtsFreeListSendFn(int npes, int *pes, int size, char *msg) {
 #endif
 }
 
-void machineFreeListSendFn(pami_context_t my_context, int npes, int *pes, int size, char *msg) {
+void machineFreeListSendFn(pami_context_t my_context, int npes, const int *pes, int size, char *msg) {
   int i;
   char *copymsg;
 #if CMK_SMP
@@ -1305,7 +1307,7 @@ void machineFreeListSendFn(pami_context_t my_context, int npes, int *pes, int si
 #endif
 }
 
-CmiCommHandle LrtsAsyncListSendFn(int npes, int *pes, int size, char *msg) {
+CmiCommHandle LrtsAsyncListSendFn(int npes, const int *pes, int size, char *msg) {
   CmiAbort("CmiAsyncListSendFn not implemented.");
   return (CmiCommHandle) 0;
 }

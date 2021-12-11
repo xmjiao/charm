@@ -99,11 +99,11 @@ class Main : public CBase_Main {
       }
 
       if (arrayDimX < blockDimX || arrayDimX % blockDimX != 0)
-        CkAbort("array_size_X % block_size_X != 0!");
+        CkAbort("array_size_X %% block_size_X != 0!");
       if (arrayDimY < blockDimY || arrayDimY % blockDimY != 0)
-        CkAbort("array_size_Y % block_size_Y != 0!");
+        CkAbort("array_size_Y %% block_size_Y != 0!");
       if (arrayDimZ < blockDimZ || arrayDimZ % blockDimZ != 0)
-        CkAbort("array_size_Z % block_size_Z != 0!");
+        CkAbort("array_size_Z %% block_size_Z != 0!");
 
       num_chare_x = arrayDimX / blockDimX;
       num_chare_y = arrayDimY / blockDimY;
@@ -180,13 +180,6 @@ class Stencil: public CBase_Stencil {
       bottomGhost = new double[blockDimX*blockDimZ];
       frontGhost  = new double[blockDimX*blockDimY];
       backGhost   = new double[blockDimX*blockDimY];
-
-#if CMK_LBDB_ON
-      // set period arbitrarily small so that LB occurs when AtSync is called
-      // this is in case the default LBPERIOD is larger than the time to complete LBPERIOD_ITER
-      // iterations
-      getLBDB()->SetLBPeriod(0);
-#endif
     }
 
     void pup(PUP::er &p)
@@ -354,7 +347,9 @@ class Stencil: public CBase_Stencil {
       } else
         work = 10.0;
 
+#ifndef _MSC_VER
 #pragma unroll
+#endif
       for(int w=0; w<work; w++) {
         for(int k=1; k<blockDimZ+1; ++k)
           for(int j=1; j<blockDimY+1; ++j)

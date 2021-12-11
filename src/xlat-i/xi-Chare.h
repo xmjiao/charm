@@ -15,7 +15,20 @@ struct TramInfo {
   std::string type;
   std::string name;
   std::string itemType;
-  TramInfo(const char* t, const char* n, const char* i) : type(t), name(n), itemType(i) {}
+  int numDimensions;
+  int bufferSize;
+  int maxItemsBuffered;
+  int thresholdFractionNumerator;
+  int thresholdFractionDenominator;
+  int cutoffFractionNumerator;
+  int cutoffFractionDenominator;
+
+  TramInfo(const char* t, const char* n, const char* i, int nd, int b,
+    int mib, int tfn, int tfd, int cfn, int cfd)
+    : type(t), name(n), itemType(i), numDimensions(nd), bufferSize(b),
+    maxItemsBuffered(mib), thresholdFractionNumerator(tfn),
+    thresholdFractionDenominator(tfd), cutoffFractionNumerator(cfn),
+    cutoffFractionDenominator(cfd) {}
 };
 
 /* Chare or group is a templated entity */
@@ -51,6 +64,7 @@ class Chare : public TEntity {
 
   int entryCount;
   int hasSdagEntry;
+  int hasWhenIdleEntry;
 
   void genTypedefs(XStr& str);
   void genRegisterMethodDef(XStr& str);
@@ -92,6 +106,8 @@ class Chare : public TEntity {
   int isForSection(void) const { return forElement == forSection; }
   int hasSdag() const { return hasSdagEntry; }
   void setSdag(int f) { hasSdagEntry = f; }
+  int hasWhenIdle() const { return hasWhenIdleEntry; }
+  void setWhenIdle(int f) { hasWhenIdleEntry = f; }
   forWhom getForWhom(void) const { return forElement; }
   void print(XStr& str);
   void check();
@@ -106,40 +122,6 @@ class Chare : public TEntity {
   void genTramTypes();
   void genTramDecls(XStr& str);
   void genTramInits(XStr& str);
-
-  // DMK - Accel Support
-  int genAccels_spe_c_funcBodies(XStr& str) {
-    int rtn = 0;
-    if (list) {
-      rtn += list->genAccels_spe_c_funcBodies(str);
-    }
-    return rtn;
-  }
-  void genAccels_spe_c_regFuncs(XStr& str) {
-    if (list) {
-      list->genAccels_spe_c_regFuncs(str);
-    }
-  }
-  void genAccels_spe_c_callInits(XStr& str) {
-    if (list) {
-      list->genAccels_spe_c_callInits(str);
-    }
-  }
-  void genAccels_spe_h_includes(XStr& str) {
-    if (list) {
-      list->genAccels_spe_h_includes(str);
-    }
-  }
-  void genAccels_spe_h_fiCountDefs(XStr& str) {
-    if (list) {
-      list->genAccels_spe_h_fiCountDefs(str);
-    }
-  }
-  void genAccels_ppe_c_regFuncs(XStr& str) {
-    if (list) {
-      list->genAccels_ppe_c_regFuncs(str);
-    }
-  }
 
   int nextEntry(void) { return entryCount++; }
   virtual void genSubDecls(XStr& str);

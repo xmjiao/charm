@@ -200,6 +200,7 @@ int printf(const char *fmt, ...) {
 
 
 #include "converse.h"
+#include "cmirdmautils.h"
 #include "memory-isomalloc.h"
 
 #include <stdio.h>
@@ -266,9 +267,6 @@ int _kq = -1;
 #define PRINTBUFSIZE 16384
 
 #include "machine-rdma.h"
-#if CMK_ONESIDED_IMPL
-#include "machine-onesided.h"
-#endif
 
 #if CMK_SHRINK_EXPAND
 extern void resumeAfterRealloc(void);
@@ -361,16 +359,12 @@ static void KillOnAllSigs(int sigNo)
   already_in_signal_handler=1;
 
 #if CMK_CCS_AVAILABLE
-  if (CpvAccess(cmiArgDebugFlag)) {
+  if (cmiArgDebugFlag && CmiMyRank()==0) {
     int reply = 0;
     CpdNotify(CPD_SIGNAL,sigNo);
-#if ! CMK_BIGSIM_CHARM
     CcsSendReplyNoError(4,&reply);/*Send an empty reply if not*/
     CpvAccess(freezeModeFlag) = 1;
     CpdFreezeModeScheduler();
-#else
-    CpdFreeze();
-#endif
   }
 #endif
   
@@ -907,12 +901,12 @@ static void CommunicationInterrupt(int ignored)
   MACHSTATE1(2,"--BEGIN SIGIO comm_mutex_isLocked: %d--", comm_flag)
   {
     /*Make sure any malloc's we do in here are NOT migratable:*/
-    CmiIsomallocBlockList *oldList=CmiIsomallocBlockListActivate(NULL);
+    CmiMemoryIsomallocDisablePush();
 /*    _Cmi_myrank=1; */
     CommunicationServerNet(0, COMM_SERVER_FROM_INTERRUPT);  /* from interrupt */
     //CommunicationServer(0);  /* from interrupt */
 /*    _Cmi_myrank=0; */
-    CmiIsomallocBlockListActivate(oldList);
+    CmiMemoryIsomallocDisablePop();
   }
   MACHSTATE(2,"--END SIGIO--")
 }
@@ -930,8 +924,6 @@ static void CmiDestroyLocks(void)
 /*Add a message to this processor's receive queue 
   Must be called while holding comm. lock
 */
-
-extern double evacTime;
 
 /***************************************************************
  Communication with charmrun:
@@ -953,7 +945,7 @@ static int sendone_abort_fn(SOCKET skt,int code,const char *msg) {
 	// so printing an error makes no sense. The message is not seen normally
 	// since processes are spawned by charmrun as DETACHED_PROCESS by default and
 	// have no console output.
-	// With CMK_CHARMPY=1 on Windows, charmrun spawns one process in same console,
+	// With CMK_CHARM4PY=1 on Windows, charmrun spawns one process in same console,
 	// because any output before charm starts needs to be seen (e.g. Python syntax errors)
 	// so this print needs to be disabled
 	fprintf(stderr,"Socket error %d in ctrl_sendone! %s\n",code,msg);
@@ -1552,7 +1544,7 @@ static void node_addresses_obtain(char **argv)
         MACHSTATE(2,"recv initnode {");
   	ChMessage_recv(Cmi_charmrun_fd,&nodetabmsg);
 
-    if (strcmp("nodefork", nodetabmsg.header.type) == 0)
+    while (strcmp("nodefork", nodetabmsg.header.type) == 0)
     {
 #ifndef _WIN32
       int i;
@@ -1708,7 +1700,7 @@ CmiCommHandle LrtsSendFunc(int destNode, int pe, int size, char *data, int freem
  *
  ****************************************************************************/
                                                                                 
-void LrtsSyncListSendFn(int npes, int *pes, int len, char *msg)
+void LrtsSyncListSendFn(int npes, const int *pes, int len, char *msg)
 {
   int i;
   for(i=0;i<npes;i++) {
@@ -1717,7 +1709,7 @@ void LrtsSyncListSendFn(int npes, int *pes, int len, char *msg)
   }
 }
                                                                                 
-CmiCommHandle LrtsAsyncListSendFn(int npes, int *pes, int len, char *msg)
+CmiCommHandle LrtsAsyncListSendFn(int npes, const int *pes, int len, char *msg)
 {
   CmiError("ListSend not implemented.");
   return (CmiCommHandle) 0;
@@ -1728,7 +1720,7 @@ CmiCommHandle LrtsAsyncListSendFn(int npes, int *pes, int len, char *msg)
   returns is not changed, we can use memory reference trick to avoid 
   memory copying here
 */
-void LrtsFreeListSendFn(int npes, int *pes, int len, char *msg)
+void LrtsFreeListSendFn(int npes, const int *pes, int len, char *msg)
 {
   int i;
   for(i=0;i<npes;i++) {
@@ -2010,11 +2002,11 @@ void ConverseCleanup(void)
         }
       }
 
-      char **ret;
+      const char **ret;
       if (restart_idx == -1) {
-        ret=(char **)malloc(sizeof(char *)*(argc+10));
+        ret=(const char **)malloc(sizeof(char *)*(argc+10));
       } else {
-        ret=(char **)malloc(sizeof(char *)*(argc+8));
+        ret=(const char **)malloc(sizeof(char *)*(argc+8));
       }
 
       for (i=0;i<argc;i++) {
@@ -2036,7 +2028,7 @@ void ConverseCleanup(void)
 
       ret[argc+5]="+myoldpe";
       char temp3[50];
-      sprintf(temp3,"%d", _Cmi_mype);
+      sprintf(temp3,"%d", CmiMyPe());
       ret[argc+6]=temp3;
 
       if (restart_idx == -1) {
@@ -2080,7 +2072,7 @@ void ConverseCleanup(void)
       }
 
       // TODO: check variant of execv that takes file descriptor
-      execv(ret[0], ret); // Need to check if the process name is always first arg
+      execv(ret[0], const_cast<char * const *>(ret)); // Need to check if the process name is always first arg
       /* should not be here */
       MACHSTATE1(3,"execv error: %s", strerror(errno));
       CmiPrintf("[%d] should not be here\n", CmiMyPe());
@@ -2159,8 +2151,7 @@ void LrtsInit(int *argc, char ***argv, int *numNodes, int *myNodeID)
   Cmi_truecrash = 1;
 #endif
   if (CmiGetArgFlagDesc(*argv,"+truecrash","Do not install signal handlers") ||
-      CmiGetArgFlagDesc(*argv,"++debug",NULL /*meaning: don't show this*/) ||
-      CmiNumNodes()<=32) Cmi_truecrash = 1;
+      CmiGetArgFlagDesc(*argv,"++debug",NULL /*meaning: don't show this*/) ) Cmi_truecrash = 1;
     /* netpoll disable signal */
   if (CmiGetArgFlagDesc(*argv,"+netpoll","Do not use SIGIO--poll instead")) Cmi_netpoll = 1;
   if (CmiGetArgFlagDesc(*argv,"+netint","Use SIGIO")) Cmi_netpoll = 0;
@@ -2261,17 +2252,6 @@ void LrtsInit(int *argc, char ***argv, int *numNodes, int *myNodeID)
   *myNodeID = Lrts_myNode;
 }
 
-
-#if CMK_CELL
-
-#include "spert_ppu.h"
-
-void machine_OffloadAPIProgress(void) {
-  LOCK_IF_AVAILABLE();
-  OffloadAPIProgress();
-  UNLOCK_IF_AVAILABLE();
-}
-#endif
 
 void LrtsPrepareEnvelope(char *msg, int size)
 {

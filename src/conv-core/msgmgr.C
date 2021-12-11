@@ -33,9 +33,7 @@ CmmTable CmmNew(void)
 void CmmFree(CmmTable t)
 {
   if (t==NULL) return;
-#if (!defined(_FAULT_MLOG_) && !defined(_FAULT_CAUSAL_))    
   if (t->first!=NULL) CmiAbort("Cannot free a non-empty message table!");
-#endif
   CmiFree(t);
 }
 
@@ -171,6 +169,7 @@ CmmTable CmmPup(pup_er p, CmmTable t, CmmPupMessageFn msgpup)
       void *msg;
       pup_int(p, &ntags);
       tags = (int*) malloc(ntags*sizeof(int));
+      CmiEnforce(tags != nullptr);
       pup_ints(p, tags, ntags);
       msgpup(p,&msg);
       CmmPut(t, ntags, tags, msg);

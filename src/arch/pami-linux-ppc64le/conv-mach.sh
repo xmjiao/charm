@@ -23,9 +23,9 @@ CMK_RANLIB='ranlib'
 CMK_LIBS='-lckqt'
 CMK_LD_LIBRARY_PATH="-Wl,-rpath,$CHARMLIBSO/"
 
-CMK_SYSINC="-I $PAMI_INC -I $LIBCOLL_INC"
-#CMK_SYSLIBS="-L $PAMI_LIB -L /usr/lib/powerpc64le-linux-gnu -lpami -libverbs -lnuma -lstdc++ -lc -ldl -lrt -lpthread"
-CMK_SYSLIBS="-L $PAMI_LIB -L $LIBCOLL_LIB -lcollectives -L /usr/lib/powerpc64le-linux-gnu -lpami -libverbs -lstdc++ -lc -ldl -lrt -lpthread"
+CMK_SYSINC="-I$PAMI_INC -I$LIBCOLL_INC"
+#CMK_SYSLIBS="-L$PAMI_LIB -L/usr/lib/powerpc64le-linux-gnu -lpami -libverbs -lnuma -lstdc++ -lc -ldl -lrt -lpthread"
+CMK_SYSLIBS="-L$PAMI_LIB -L$LIBCOLL_LIB -lcollectives -L/usr/lib/powerpc64le-linux-gnu -lpami -libverbs -lstdc++ -lc -ldl -lrt -lpthread"
 
 CMK_NATIVE_LIBS=''
 CMK_NATIVE_DEFS='-q64'
@@ -40,7 +40,7 @@ CMK_MOD_EXT='mod'
 CMK_F90_MODINC='-p'
 CMK_F90_USE_MODDIR=''
 
-F90DIR=`which ifort 2> /dev/null`
+F90DIR=`command -v ifort 2> /dev/null`
 if test -x "$F90DIR"
 then
   MYDIR="$PWD"

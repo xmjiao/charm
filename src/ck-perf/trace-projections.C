@@ -105,71 +105,10 @@ void _createTraceprojections(char **argv)
   CkpvInitialize(CkVec<UsrEvent *>*, usrStats);
   CkpvAccess(usrEvents) = new CkVec<UsrEvent *>();
   CkpvAccess(usrStats) = new CkVec<UsrEvent *>();
-#if CMK_BIGSIM_CHARM
-  // CthRegister does not call the constructor
-//  CkpvAccess(usrEvents) = CkVec<UsrEvent *>();
-#endif //CMK_BIGSIM_CHARM
   CkpvInitialize(TraceProjections*, _trace);
   CkpvAccess(_trace) = new  TraceProjections(argv);
   CkpvAccess(_traces)->addTrace(CkpvAccess(_trace));
   if (CkMyPe()==0) CkPrintf("Charm++: Tracemode Projections enabled.\n");
-}
- 
-/* ****** CW TEMPORARY LOCATION ***** Support for thread listeners */
-
-struct TraceThreadListener {
-  struct CthThreadListener base;
-  int event;
-  int msgType;
-  int ep;
-  int srcPe;
-  int ml;
-  CmiObjId idx;
-};
-
-static void traceThreadListener_suspend(struct CthThreadListener *l)
-{
-  TraceThreadListener *a=(TraceThreadListener *)l;
-  /* here, we activate the appropriate trace codes for the appropriate
-     registered modules */
-  traceSuspend();
-}
-
-static void traceThreadListener_resume(struct CthThreadListener *l)
-{
-  TraceThreadListener *a=(TraceThreadListener *)l;
-  /* here, we activate the appropriate trace codes for the appropriate
-     registered modules */
-  _TRACE_BEGIN_EXECUTE_DETAILED(a->event,a->msgType,a->ep,a->srcPe,a->ml,
-				CthGetThreadID(a->base.thread), NULL);
-  a->event=-1;
-  a->srcPe=CkMyPe(); /* potential lie to migrated threads */
-  a->ml=0;
-}
-
-static void traceThreadListener_free(struct CthThreadListener *l)
-{
-  TraceThreadListener *a=(TraceThreadListener *)l;
-  delete a;
-}
-
-void TraceProjections::traceAddThreadListeners(CthThread tid, envelope *e)
-{
-#if CMK_TRACE_ENABLED
-  /* strip essential information from the envelope */
-  TraceThreadListener *a= new TraceThreadListener;
-  
-  a->base.suspend=traceThreadListener_suspend;
-  a->base.resume=traceThreadListener_resume;
-  a->base.free=traceThreadListener_free;
-  a->event=e->getEvent();
-  a->msgType=e->getMsgtype();
-  a->ep=e->getEpIdx();
-  a->srcPe=e->getSrcPe();
-  a->ml=e->getTotalsize();
-
-  CthAddListener(tid, (CthThreadListener *)a);
-#endif
 }
 
 void LogPool::openLog(const char *mode)
@@ -215,11 +154,10 @@ void LogPool::closeLog(void)
 }
 
 LogPool::LogPool(char *pgm) {
-  pool = new LogEntry[CkpvAccess(CtrLogBufSize)];
+  pool.reserve(CkpvAccess(CtrLogBufSize));
   // defaults to writing data (no outlier changes)
   writeSummaryFiles = false;
   writeData = true;
-  numEntries = 0;
   lastCreationEvent = -1;
   // **CW** for simple delta encoding
   prevTime = 0.0;
@@ -233,7 +171,6 @@ LogPool::LogPool(char *pgm) {
   keepPhase = NULL;
 
   fileCreated = false;
-  poolSize = CkpvAccess(CtrLogBufSize);
   pgmname = new char[strlen(pgm)+1];
   strcpy(pgmname, pgm);
 
@@ -359,21 +296,8 @@ LogPool::~LogPool()
 #endif
   }
 
-#if CMK_BIGSIM_CHARM
-  extern int correctTimeLog;
-  if (correctTimeLog) {
-    createFile("-bg");
-    if (CkMyPe() == 0) {
-      createSts("-bg");
-    }
-    writeHeader();
-    if (CkMyPe() == 0) writeSts(NULL);
-    postProcessLog();
-  }
-#endif
-
-  delete[] pool;
   delete [] fname;
+  delete [] pgmname;
 }
 
 void LogPool::writeHeader()
@@ -383,16 +307,19 @@ void LogPool::writeHeader()
   if(!binary) {
 #if CMK_USE_ZLIB
     if(compressed) {
-      gzprintf(zfp, "PROJECTIONS-RECORD %d\n", numEntries);
+      // TODO: Remove these int casts after ensuring Projections can parse the uncasted
+      // values (particularly for the binary version, the other casts are for consistency)
+      gzprintf(zfp, "PROJECTIONS-RECORD %d\n", (int)pool.size());
     } 
     else /* else clause is below... */
 #endif
     /*... may hang over from else above */ {
-      fprintf(fp, "PROJECTIONS-RECORD %d\n", numEntries);
+      fprintf(fp, "PROJECTIONS-RECORD %d\n", (int)pool.size());
     }
   }
   else { // binary
-    fwrite(&numEntries,sizeof(numEntries),1,fp);
+    int size = pool.size();
+    fwrite(&size, sizeof(size), 1, fp);
   }
 }
 
@@ -428,32 +355,32 @@ void LogPool::write(int writedelta)
   // **FIXME** - Should probably consider a more sophisticated bounds-based
   //   approach for selective writing instead of making multiple if-checks
   //   for every single event.
-  for(UInt i=0; i<numEntries; i++) {
+  for(auto& entry : pool) {
     if (!writedelta) {
       if (keepPhase == NULL) {
 	// default case, when no phase selection is required.
-	pool[i].pup(*p);
+	entry.pup(*p);
       } else {
 	// **FIXME** Might be a good idea to create a "filler" event block for
 	//   all the events taken out by phase filtering.
-	if (pool[i].type == END_PHASE) {
+	if (entry.type == END_PHASE) {
 	  // always write phase markers
-	  pool[i].pup(*p);
+	  entry.pup(*p);
 	  curPhase++;
-	} else if (pool[i].type == BEGIN_COMPUTATION ||
-		   pool[i].type == END_COMPUTATION) {
+	} else if (entry.type == BEGIN_COMPUTATION ||
+		   entry.type == END_COMPUTATION) {
 	  // always write BEGIN and END COMPUTATION markers
-	  pool[i].pup(*p);
+	  entry.pup(*p);
 	} else if (keepPhase[curPhase]) {
-	  pool[i].pup(*p);
+	  entry.pup(*p);
 	}
       }
     }
     else {	// delta
       // **FIXME** Implement phase-selective writing for delta logs
       //   eventually
-      double time = pool[i].time;
-      if (pool[i].type != BEGIN_COMPUTATION && pool[i].type != END_COMPUTATION)
+      double time = entry.time;
+      if (entry.type != BEGIN_COMPUTATION && entry.type != END_COMPUTATION)
       {
         double timeDiff = (time-prevTime)*1.0e6;
         UInt intTimeDiff = (UInt)timeDiff;
@@ -462,10 +389,10 @@ void LogPool::write(int writedelta)
           timeErr -= 1.0;
           intTimeDiff++;
         }
-        pool[i].time = intTimeDiff/1.0e6;
+        entry.time = intTimeDiff/1.0e6;
       }
-      pool[i].pup(*p);
-      pool[i].time = time;	// restore time value
+      entry.pup(*p);
+      entry.time = time;	// restore time value
       prevTime = time;
     }
   }
@@ -482,12 +409,12 @@ void LogPool::writeSts(void)
   fprintf(stsfp, "VERSION %s\n", PROJECTION_VERSION);
   fprintf(stsfp, "TOTAL_PHASES %d\n", numPhases);
 #if CMK_HAS_COUNTER_PAPI
-  fprintf(stsfp, "TOTAL_PAPI_EVENTS %d\n", NUMPAPIEVENTS);
-  // for now, use i, next time use papiEvents[i].
+  fprintf(stsfp, "TOTAL_PAPI_EVENTS %d\n", CkpvAccess(numEvents));
+  // for now, use i, next time use CkpvAccess(papiEvents)[i].
   // **CW** papi event names is a hack.
   char eventName[PAPI_MAX_STR_LEN];
-  for (i=0;i<NUMPAPIEVENTS;i++) {
-    PAPI_event_code_to_name(papiEvents[i], eventName);
+  for (i=0;i<CkpvAccess(numEvents);i++) {
+    PAPI_event_code_to_name(CkpvAccess(papiEvents)[i], eventName);
     fprintf(stsfp, "PAPI_EVENT %d %s\n", i, eventName);
   }
 #endif
@@ -558,32 +485,21 @@ void LogPool::writeStatis(void)
   fclose(statisfp);
 }
 
-#if CMK_BIGSIM_CHARM
-static void updateProjLog(void *data, double t, double recvT, void *ptr)
-{
-  LogEntry *log = (LogEntry *)data;
-  FILE *fp = *(FILE **)ptr;
-  log->time = t;
-  log->recvTime = recvT<0.0?0:recvT;
-//  log->write(fp);
-  toProjectionsFile p(fp);
-  log->pup(p);
-}
-#endif
-
 // flush log entries to disk
-void LogPool::flushLogBuffer()
+void LogPool::flushLogBuffer(bool force /* = false */)
 {
-  if (numEntries) {
+  if (!pool.empty() && (force || pool.size() == pool.capacity()))
+  {
     double writeTime = TraceTimer();
     writeLog();
+    pool.clear();
     hasFlushed = true;
-    numEntries = 0;
     lastCreationEvent = -1;
-    new (&pool[numEntries++]) LogEntry(writeTime, BEGIN_INTERRUPT);
-    new (&pool[numEntries++]) LogEntry(TraceTimer(), END_INTERRUPT);
-    //CkPrintf("Warning: Projections log flushed to disk on PE %d.\n", CkMyPe());
-    if (!traceProjectionsGID.isZero()) {    // report flushing events to PE 0
+    pool.emplace_back(BEGIN_INTERRUPT, writeTime, 0, 0, 0, 0, 0, nullptr, 0, 0);
+    pool.emplace_back(END_INTERRUPT, TraceTimer(), 0, 0, 0, 0, 0, nullptr, 0, 0);
+    // CkPrintf("Warning: Projections log flushed to disk on PE %d.\n", CkMyPe());
+    if (!traceProjectionsGID.isZero())
+    {  // report flushing events to PE 0
       CProxy_TraceProjectionsBOC bocProxy(traceProjectionsGID);
       bocProxy[0].flush_warning(CkMyPe());
     }
@@ -592,7 +508,7 @@ void LogPool::flushLogBuffer()
 
 void LogPool::add(UChar type, UShort mIdx, UShort eIdx,
 		  double time, int event, int pe, int ml, CmiObjId *id, 
-		  double recvT, double cpuT, int numPe, double statVal)
+		  double recvT, double cpuT)
 {
     switch(type)
     {
@@ -657,124 +573,60 @@ void LogPool::add(UChar type, UShort mIdx, UShort eIdx,
   if (type == CREATION ||
       type == CREATION_MULTICAST ||
       type == CREATION_BCAST) {
-    lastCreationEvent = numEntries;
+    lastCreationEvent = pool.size();
   }
-  new (&pool[numEntries++])
-    LogEntry(time, type, mIdx, eIdx, event, pe, ml, id, recvT, cpuT, numPe, statVal);
+  pool.emplace_back(type, time, mIdx, eIdx, event, pe, ml, id, recvT, cpuT);
   if ((type == END_PHASE) || (type == END_COMPUTATION)) {
     numPhases++;
   }
-  if(poolSize==numEntries) {
-    flushLogBuffer();
-#if CMK_BIGSIM_CHARM
-    extern int correctTimeLog;
-    if (correctTimeLog) CmiAbort("I/O interrupt!\n");
-#endif
-  }
-#if CMK_BIGSIM_CHARM
-  switch (type) {
-    case BEGIN_PROCESSING:
-      pool[numEntries-1].recvTime = BgGetRecvTime();
-    case END_PROCESSING:
-    case BEGIN_COMPUTATION:
-    case END_COMPUTATION:
-    case CREATION:
-    case BEGIN_PACK:
-    case END_PACK:
-    case BEGIN_UNPACK:
-    case END_UNPACK:
-    case USER_EVENT_PAIR:
-      bgAddProjEvent(&pool[numEntries-1], numEntries-1, time, updateProjLog, &fp, BG_EVENT_PROJ);
-  }
-#endif
-}
-
-void LogPool::add(UChar type,double time,UShort funcID,int lineNum,char *fileName){
-#ifndef CMK_BIGSIM_CHARM
-  if (type == CREATION ||
-      type == CREATION_MULTICAST ||
-      type == CREATION_BCAST) {
-    lastCreationEvent = numEntries;
-  }
-  new (&pool[numEntries++])
-	LogEntry(time,type,funcID,lineNum,fileName);
-  if(poolSize == numEntries){
-    flushLogBuffer();
-  }
-#endif	
+  flushLogBuffer();
 }
 
 void LogPool::addUserBracketEventNestedID(unsigned char type, double time,
                                           UShort mIdx, int event, int nestedID) {
-  new (&pool[numEntries++])
-  LogEntry(time, type, mIdx, 0, event, CkMyPe(), 0, 0, 0, 0, 0, 0, nestedID);
-  if(poolSize == numEntries){
-    flushLogBuffer();
-  }
+  pool.emplace_back(type, time, mIdx, event, nestedID);
+  flushLogBuffer();
 }
 
-  
-void LogPool::addMemoryUsage(unsigned char type,double time,double memUsage){
-#ifndef CMK_BIGSIM_CHARM
-  if (type == CREATION ||
-      type == CREATION_MULTICAST ||
-      type == CREATION_BCAST) {
-    lastCreationEvent = numEntries;
-  }
-  new (&pool[numEntries++])
-	LogEntry(type,time,memUsage);
-  if(poolSize == numEntries){
-    flushLogBuffer();
-  }
-#endif	
-	
-}  
-
-void LogPool::addUserSupplied(int data){
-	// add an event
-	add(USER_SUPPLIED, 0, 0, TraceTimer(), -1, -1, 0, 0, 0, 0, 0 );
-
-	// set the user supplied value for the previously created event 
-	pool[numEntries-1].setUserSuppliedData(data);
+void LogPool::addMemoryUsage(double time, double memUsage)
+{
+  pool.emplace_back(MEMORY_USAGE_CURRENT, time, memUsage);
+  flushLogBuffer();
 }
 
-
-void LogPool::addUserSuppliedNote(char *note){
-	// add an event
-	add(USER_SUPPLIED_NOTE, 0, 0, TraceTimer(), -1, -1, 0, 0, 0, 0, 0 );
-
-	// set the user supplied note for the previously created event 
-	pool[numEntries-1].setUserSuppliedNote(note);
+void LogPool::addUserStat(double time, int pe, int e, double stat,
+                          double statTime)
+{
+  pool.emplace_back(USER_STAT, time, pe, e, stat, statTime);
+  flushLogBuffer();
 }
 
-void LogPool::addUserSuppliedBracketedNote(char *note, int eventID, double bt, double et){
-  //CkPrintf("LogPool::addUserSuppliedBracketedNote eventID=%d\n", eventID);
-#ifndef CMK_BIGSIM_CHARM
-#if MPI_TRACE_MACHINE_HACK
-  //This part of code is used  to combine the contiguous
-  //MPI_Test and MPI_Iprobe events to reduce the number of
-  //entries
-#define MPI_TEST_EVENT_ID 60
-#define MPI_IPROBE_EVENT_ID 70 
-  int lastEvent = pool[numEntries-1].event;
-  if((eventID==MPI_TEST_EVENT_ID || eventID==MPI_IPROBE_EVENT_ID) && (eventID==lastEvent)){
-    //just replace the endtime of last event
-    //CkPrintf("addUserSuppliedBracketNote: for event %d\n", lastEvent);
-    pool[numEntries].endTime = et;
-  }else{
-    new (&pool[numEntries++])
-      LogEntry(bt, et, USER_SUPPLIED_BRACKETED_NOTE, note, eventID);
-  }
-#else
-  new (&pool[numEntries++])
-    LogEntry(bt, et, USER_SUPPLIED_BRACKETED_NOTE, note, eventID);
-#endif
-  if(poolSize == numEntries){
-    flushLogBuffer();
-  }
-#endif	
+void LogPool::addUserSupplied(int data)
+{
+  pool.emplace_back(USER_SUPPLIED, TraceTimer(), data);
+  flushLogBuffer();
 }
 
+void LogPool::addUserSuppliedNote(char* note)
+{
+  pool.emplace_back(USER_SUPPLIED_NOTE, TraceTimer(), note);
+  flushLogBuffer();
+}
+
+void LogPool::addUserSuppliedBracketedNote(char* note, int eventID, double bt, double et)
+{
+  pool.emplace_back(USER_SUPPLIED_BRACKETED_NOTE, bt, note, eventID, et);
+  flushLogBuffer();
+}
+
+void LogPool::addCreationBroadcast(unsigned short mIdx, unsigned short eIdx, double time,
+                                   int event, int pe, int ml, int numPe)
+
+{
+  lastCreationEvent = pool.size();
+  pool.emplace_back(CREATION_BCAST, time, mIdx, eIdx, event, pe, ml, numPe);
+  flushLogBuffer();
+}
 
 /* **CW** Not sure if this is the right thing to do. Feels more like
    a hack than a solution to Sameer's request to add the destination
@@ -784,57 +636,28 @@ void LogPool::addUserSuppliedBracketedNote(char *note, int eventID, double bt, d
    pelist == NULL will be used to indicate a global broadcast with 
    num PEs.
 */
-void LogPool::addCreationMulticast(UShort mIdx, UShort eIdx, double time,
-				   int event, int pe, int ml, CmiObjId *id,
-				   double recvT, int numPe, int *pelist)
+void LogPool::addCreationMulticast(UShort mIdx, UShort eIdx, double time, int event,
+                                   int pe, int ml, int numPe, const int* pelist)
 {
-  lastCreationEvent = numEntries;
-  new (&pool[numEntries++])
-    LogEntry(time, mIdx, eIdx, event, pe, ml, id, recvT, numPe, pelist);
-  if(poolSize==numEntries) {
-    flushLogBuffer();
-  }
+  lastCreationEvent = pool.size();
+  pool.emplace_back(CREATION_MULTICAST, time, mIdx, eIdx, event, pe, ml, numPe, pelist);
+  flushLogBuffer();
 }
 
 void LogPool::postProcessLog()
 {
-#if CMK_BIGSIM_CHARM
-  bgUpdateProj(1);   // event type
-#endif
 }
 
 void LogPool::modLastEntryTimestamp(double ts)
 {
-  pool[numEntries-1].time = ts;
-  //pool[numEntries-1].cputime = ts;
+  pool.back().time = ts;
+  //pool.back().cputime = ts;
 }
-
-// /** Constructor for a multicast log entry */
-// 
-//  THIS WAS MOVED TO trace-projections.h with the other constructors
-// 
-// LogEntry::LogEntry(double tm, unsigned short m, unsigned short e, int ev, int p,
-// 	     int ml, CmiObjId *d, double rt, int numPe, int *pelist) 
-// {
-//     type = CREATION_MULTICAST; mIdx = m; eIdx = e; event = ev; pe = p; time = tm; msglen = ml;
-//     if (d) id = *d; else {id.id[0]=id.id[1]=id.id[2]=id.id[3]=-1; };
-//     recvTime = rt; 
-//     numpes = numPe;
-//     userSuppliedNote = NULL;
-//     if (pelist != NULL) {
-// 	pes = new int[numPe];
-// 	for (int i=0; i<numPe; i++) {
-// 	  pes[i] = pelist[i];
-// 	}
-//     } else {
-// 	pes= NULL;
-//     }
-// }
 
 //void LogEntry::addPapi(LONG_LONG_PAPI *papiVals)
 //{
 //#if CMK_HAS_COUNTER_PAPI
-//   memcpy(papiValues, papiVals, sizeof(LONG_LONG_PAPI)*NUMPAPIEVENTS);
+//   memcpy(papiValues, papiVals, sizeof(LONG_LONG_PAPI)*CkpvAccess(numEvents));
 //#endif
 //}
 
@@ -852,6 +675,8 @@ void LogEntry::pup(PUP::er &p)
 
   switch (type) {
     case USER_EVENT:
+      p|mIdx; p|itime; p|event; p|pe;
+      break;
     case USER_EVENT_PAIR:
     case BEGIN_USER_EVENT_PAIR:
     case END_USER_EVENT_PAIR:
@@ -893,7 +718,7 @@ void LogEntry::pup(PUP::er &p)
       p|icputime;
 #if CMK_HAS_COUNTER_PAPI
       //p|numPapiEvents;
-      for (i=0; i<NUMPAPIEVENTS; i++) {
+      for (i=0; i<CkpvAccess(numEvents); i++) {
 	// not yet!!!
 	//	p|papiIDs[i]; 
 	p|papiValues[i];
@@ -912,7 +737,7 @@ void LogEntry::pup(PUP::er &p)
       p|mIdx; p|eIdx; p|itime; p|event; p|pe; p|msglen; p|icputime;
 #if CMK_HAS_COUNTER_PAPI
       //p|numPapiEvents;
-      for (i=0; i<NUMPAPIEVENTS; i++) {
+      for (i=0; i<CkpvAccess(numEvents); i++) {
 	// not yet!!!
 	//	p|papiIDs[i];
 	p|papiValues[i];
@@ -928,36 +753,14 @@ void LogEntry::pup(PUP::er &p)
 	break;
     case USER_SUPPLIED_NOTE:
 	  p|itime;
-	  int length;
-	  length=0;
-	  if (p.isPacking()) length = strlen(userSuppliedNote);
-          p | length;
-	  char space;
-	  space = ' ';
-          p | space;
-	  if (p.isUnpacking()) {
-	    userSuppliedNote = new char[length+1];
-	    userSuppliedNote[length] = '\0';
-	  }
-   	  PUParray(p,userSuppliedNote, length);
+	  p|userSuppliedNote;
 	  break;
     case USER_SUPPLIED_BRACKETED_NOTE:
       //CkPrintf("Writting out a USER_SUPPLIED_BRACKETED_NOTE\n");
 	  p|itime;
 	  p|iEndTime;
 	  p|event;
-	  int length2;
-	  length2=0;
-	  if (p.isPacking()) length2 = strlen(userSuppliedNote);
-          p | length2;
-	  char space2;
-	  space2 = ' ';
-          p | space2;
-	  if (p.isUnpacking()) {
-	    userSuppliedNote = new char[length2+1];
-	    userSuppliedNote[length2] = '\0';
-	  }
-   	  PUParray(p,userSuppliedNote, length2);
+	  p|userSuppliedNote;
 	  break;
     case MEMORY_USAGE_CURRENT:
       p | memUsage;
@@ -979,16 +782,25 @@ void LogEntry::pup(PUP::er &p)
     case CREATION_BCAST:
       if (p.isPacking()) irecvtime = (CMK_TYPEDEF_UINT8)(1.0e6*recvTime);
       p|mIdx; p|eIdx; p|itime;
-      p|event; p|pe; p|msglen; p|irecvtime; p|numpes;
-      if (p.isUnpacking()) recvTime = irecvtime/1.0e6;
+      p|event; p|pe; p|msglen; p|irecvtime;
+      { // Needed to control the scope of numpes
+        int numpes = pes.size();
+        p | numpes;
+        if (p.isUnpacking()) pes.resize(numpes);
+      }
+      if (p.isUnpacking()) recvTime = irecvtime / 1.0e6;
       break;
     case CREATION_MULTICAST:
       if (p.isPacking()) irecvtime = (CMK_TYPEDEF_UINT8)(1.0e6*recvTime);
       p|mIdx; p|eIdx; p|itime;
-      p|event; p|pe; p|msglen; p|irecvtime; p|numpes;
-      if (p.isUnpacking()) pes = numpes?new int[numpes]:NULL;
-      for (i=0; i<numpes; i++) p|pes[i];
-      if (p.isUnpacking()) recvTime = irecvtime/1.0e6;
+      p|event; p|pe; p|msglen; p|irecvtime;
+      { // Needed to control the scope of numpes
+        int numpes = pes.size();
+        p | numpes;
+        if (p.isUnpacking()) pes.resize(numpes);
+      }
+      p | pes;
+      if (p.isUnpacking()) recvTime = irecvtime / 1.0e6;
       break;
     case MESSAGE_RECV:
       p|mIdx; p|eIdx; p|itime; p|event; p|pe; p|msglen;
@@ -1027,7 +839,7 @@ void LogEntry::pup(PUP::er &p)
 
 TraceProjections::TraceProjections(char **argv): 
   _logPool(NULL), curevent(0), inEntry(false), computationStarted(false),
-	traceNestedEvents(false), converseExit(false),
+	traceNestedEvents(true), converseExit(false),
 	currentPhaseID(0), lastPhaseEvent(NULL), endTime(0.0)
 {
   //  CkPrintf("Trace projections dummy constructor called on %d\n",CkMyPe());
@@ -1038,14 +850,14 @@ TraceProjections::TraceProjections(char **argv):
   if (CmiGetArgLongDesc(argv,"+logsize",&CkpvAccess(CtrLogBufSize), 
 		       "Log entries to buffer per I/O")) {
     if (CkMyPe() == 0) {
-      CmiPrintf("Trace: logsize: %ld\n", CkpvAccess(CtrLogBufSize));
+      CmiPrintf("Trace: logsize: %" PRId64 "\n", CkpvAccess(CtrLogBufSize));
     }
   }
   checknested = 
     CmiGetArgFlagDesc(argv,"+checknested",
 		      "check projections nest begin end execute events");
   traceNestedEvents = 
-    CmiGetArgFlagDesc(argv,"+tracenested",
+    !CmiGetArgFlagDesc(argv,"+notracenested",
               "trace projections nest begin/end execute events");
   int binary = 
     CmiGetArgFlagDesc(argv,"+binary-trace",
@@ -1054,17 +866,21 @@ TraceProjections::TraceProjections(char **argv):
   int nSubdirs = 0;
   CmiGetArgIntDesc(argv,"+trace-subdirs", &nSubdirs, "Number of subdirectories into which traces will be written");
 
-
 #if CMK_USE_ZLIB
-  int compressed = true;
-  CmiGetArgFlagDesc(argv,"+gz-trace","Write log files pre-compressed with gzip");
-  int disableCompressed = CmiGetArgFlagDesc(argv,"+no-gz-trace","Disable writing log files pre-compressed with gzip");
+  bool compressed = true;
+  CmiGetArgFlagDesc(argv,"+gz-trace","Write log files compressed with gzip");
+  const bool disableCompressed = CmiGetArgFlagDesc(argv,"+no-gz-trace","Disable writing log files compressed with gzip");
   compressed = compressed && !disableCompressed;
+  if (binary && compressed)
+    CkAbort("Binary logs cannot be compressed with gzip, must use +no-gz-trace with +binary-trace");
 #else
-  // consume the flag so there's no confusing
-  CmiGetArgFlagDesc(argv,"+gz-trace",
-		    "Write log files pre-compressed with gzip");
-  if(CkMyPe() == 0) CkPrintf("Warning> gz-trace is not supported on this machine!\n");
+  // consume the flags so there's no confusion
+  const bool compressed =
+      CmiGetArgFlagDesc(argv, "+gz-trace", "Write log files compressed with gzip");
+  CmiGetArgFlagDesc(argv, "+no-gz-trace",
+                    "Disable writing log files compressed with gzip");
+  if (CkMyPe() == 0 && compressed)
+    CkPrintf("Warning> gz-trace is not supported because Charm++ was built without zlib!\n");
 #endif
 
   int writeSummaryFiles = CmiGetArgFlagDesc(argv,"+write-analysis-file","Enable writing summary files "); 
@@ -1311,21 +1127,19 @@ void TraceProjections::userSuppliedBracketedNote(char *note, int eventID, double
 void TraceProjections::memoryUsage(double m)
 {
   if (!computationStarted) return;
-  _logPool->addMemoryUsage(MEMORY_USAGE_CURRENT, TraceTimer(), m );
-  
+  _logPool->addMemoryUsage(TraceTimer(), m);
 }
 //Updates User stat value. Makes appropriate Call to LogPool updateStat function
-void TraceProjections::updateStatPair(int e, double stat, double time)
+void TraceProjections::updateStatPair(int e, double stat, double statTime)
 {
   if (!computationStarted) return;
-  _logPool->add(USER_STAT, e, 0, TraceTimer(), curevent, CkMyPe(), 0, 0, 0.0, time, 0, stat);
+  _logPool->addUserStat(TraceTimer(), CkMyPe(), e, stat, statTime);
 }
 
-//When user time is not given, -1 is stored instead.
+//When stat time is not given, -1 is stored instead.
 void TraceProjections::updateStat(int e, double stat)
 {
-  if (!computationStarted) return;
-  _logPool->add(USER_STAT, e, 0, TraceTimer(), curevent, CkMyPe(), 0, 0, 0.0, -1, 0, stat);
+  updateStatPair(e, stat, -1);
 }
 
 void TraceProjections::creation(envelope *e, int ep, int num)
@@ -1341,9 +1155,8 @@ void TraceProjections::creation(envelope *e, int ep, int num)
     e->setEvent(curevent);
     CpvAccess(curPeEvent) = curevent;
     if (num > 1) {
-      _logPool->add(CREATION_BCAST, type, ep, curTime,
-		    curevent++, CkMyPe(), e->getTotalsize(), 
-		    NULL, 0, 0.0, num);
+      _logPool->addCreationBroadcast(type, ep, curTime, curevent++, CkMyPe(),
+                                     e->getTotalsize(), num);
     } else {
       _logPool->add(CREATION, type, ep, curTime,
 		    curevent++, CkMyPe(), e->getTotalsize(), 
@@ -1416,19 +1229,19 @@ void TraceProjections::traceSetMsgID(char *msg, int pe, int event)
 */
 
 void TraceProjections::creationMulticast(envelope *e, int ep, int num,
-					 int *pelist)
+					 const int *pelist)
 {
 #if CMK_TRACE_ENABLED
   double curTime = TraceTimer();
   if (e==0) {
     CtvAccess(curThreadEvent)=curevent;
     _logPool->addCreationMulticast(ForChareMsg, ep, curTime, curevent++,
-				   CkMyPe(), 0, 0, 0.0, num, pelist);
+				   CkMyPe(), 0, num, pelist);
   } else {
     int type=e->getMsgtype();
     e->setEvent(curevent);
     _logPool->addCreationMulticast(type, ep, curTime, curevent++, CkMyPe(),
-				   e->getTotalsize(), 0, 0.0, num, pelist);
+				   e->getTotalsize(), num, pelist);
   }
 #endif
 }
@@ -1725,6 +1538,14 @@ void toProjectionsFile::bytes(void *p,size_t n,size_t itemSize,dataType t)
     };
 }
 
+void toProjectionsFile::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {
+  bytes(p, n, itemSize, t);
+}
+
+void toProjectionsFile::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+  bytes(p, n, itemSize, t);
+}
+
 void fromProjectionsFile::bytes(void *p,size_t n,size_t itemSize,dataType t)
 {
   for (int i=0;i<n;i++) 
@@ -1755,6 +1576,14 @@ void fromProjectionsFile::bytes(void *p,size_t n,size_t itemSize,dataType t)
     };
 }
 
+void fromProjectionsFile::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {
+  bytes(p, n, itemSize, t);
+}
+
+void fromProjectionsFile::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+  bytes(p, n, itemSize, t);
+}
+
 #if CMK_USE_ZLIB
 void toProjectionsGZFile::bytes(void *p,size_t n,size_t itemSize,dataType t)
 {
@@ -1778,13 +1607,21 @@ void toProjectionsGZFile::bytes(void *p,size_t n,size_t itemSize,dataType t)
     default: CmiAbort("Unrecognized pup type code!");
     };
 }
+
+void toProjectionsGZFile::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {
+  bytes(p, n, itemSize, t);
+}
+
+void toProjectionsGZFile::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+  bytes(p, n, itemSize, t);
+}
 #endif
 
 void TraceProjections::endPhase() {
   double currentPhaseTime = TraceTimer();
   if (lastPhaseEvent != NULL) {
   } else {
-    if (_logPool->pool != NULL) {
+    if (!_logPool->pool.empty()) {
       // assumed to be BEGIN_COMPUTATION
     } else {
       CkPrintf("[%d] Warning: End Phase encountered in an empty log. Inserting BEGIN_COMPUTATION event\n", CkMyPe());
@@ -1796,9 +1633,9 @@ void TraceProjections::endPhase() {
   /* FIXME: Format should be TYPE, PHASE#, TimeStamp, [StartTime] */
   /*        We currently "borrow" from the standard add() method. */
   /*        It should really be its own add() method.             */
-  /* NOTE: assignment to lastPhaseEvent is "pre-emptive".         */
-  lastPhaseEvent = &(_logPool->pool[_logPool->numEntries]);
   _logPool->add(END_PHASE, 0, currentPhaseID, currentPhaseTime, -1, CkMyPe());
+  if (!_logPool->pool.empty() && _logPool->pool.back().type == END_PHASE)
+    lastPhaseEvent = &(_logPool->pool.back());
   currentPhaseID++;
 }
 
@@ -1851,11 +1688,7 @@ static void TraceProjectionsExitHandler()
 void initTraceProjectionsBOC()
 {
   // CkPrintf("[%d] Trace Projections initialization called!\n", CkMyPe());
-#ifdef __BIGSIM__
-  if (BgNodeRank() == 0) {
-#else
     if (CkMyRank() == 0) {
-#endif
       registerExitFn(TraceProjectionsExitHandler);
     }
 #if 0
@@ -1941,12 +1774,12 @@ void TraceProjectionsBOC::print_warning()
     if (flush_count == 0) return;
     std::set<int>::iterator it;
     CkPrintf("*************************************************************\n");
-    CkPrintf("Warning: Projections log flushed to disk %d times on %d cores:", flush_count, list.size());
+    CkPrintf("Warning: Projections log flushed to disk %d times on %zu cores:", flush_count, list.size());
     for (it=list.begin(); it!=list.end(); it++)
       CkPrintf(" %d", *it);
     CkPrintf(".\n");
     CkPrintf("Warning: The performance data is likely invalid, unless the flushes have been explicitly synchronized by your program.\n");
-    CkPrintf("Warning: This may be fixed by specifying a larger +logsize (current value %d).\n", CkpvAccess(CtrLogBufSize));
+    CkPrintf("Warning: This may be fixed by specifying a larger +logsize (current value %" PRId64 ").\n", CkpvAccess(CtrLogBufSize));
     CkPrintf("*************************************************************\n");
 }
 
@@ -2042,11 +1875,11 @@ void KMeansBOC::getNextPhaseMetrics() {
   int numEventMethods = _entryTable.size();
   LogPool *pool = CkpvAccess(_trace)->_logPool;
   
-  CkAssert(pool->numEntries > lastPhaseIdx);
+  CkAssert(pool->pool.size() > lastPhaseIdx);
   double totalPhaseTime = 0.0;
   double totalActiveTime = 0.0; // entry method + idle
 
-  for (int i=lastPhaseIdx; i<pool->numEntries; i++) {
+  for (int i=lastPhaseIdx; i<pool->pool.size(); i++) {
     if (pool->pool[i].type == BEGIN_PROCESSING) {
       // check pairing
       if (!markedBegin) {
@@ -2759,8 +2592,8 @@ void KMeansBOC::phaseDone() {
 void TraceProjectionsBOC::startTimeAnalysis()
 {
   double startTime = 0.0;
-  if (CkpvAccess(_trace)->_logPool->numEntries>0)
-     startTime = CkpvAccess(_trace)->_logPool->pool[0].time;
+  if (!CkpvAccess(_trace)->_logPool->pool.empty())
+     startTime = CkpvAccess(_trace)->_logPool->pool.front().time;
   CkCallback cb(CkReductionTarget(TraceProjectionsBOC, startTimeDone), thisProxy);
   contribute(sizeof(double), &startTime, CkReduction::min_double, cb);
 }

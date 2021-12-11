@@ -5,81 +5,11 @@
 
 #include "BaseLB.h"
 #include "DistBaseLB.h"
-#include "LBDBManager.h"
 #include "DistBaseLB.def.h"
 
 #define  DEBUGF(x)      // CmiPrintf x;
 
-void DistBaseLB::staticMigrated(void* data, LDObjHandle h, int waitBarrier) {
-  DistBaseLB *me = (DistBaseLB*)(data);
-  me->Migrated(h, waitBarrier);
-}
-
-void DistBaseLB::staticAtSync(void* data) {
-  DistBaseLB *me = (DistBaseLB*)(data);
-  me->ProcessAtSync();
-}
-
-void DistBaseLB::staticStartLB(void* data) {
-  DistBaseLB *me = (DistBaseLB*)(data);
-  me->barrierDone();
-}
-
 void DistBaseLB::barrierDone() {
-  thisProxy.AtSync();
-}
-
-void DistBaseLB::ProcessAtSync() {
-  // Ensuring that the strategy starts only after the barrier
-  CkCallback cb (CkReductionTarget(DistBaseLB, barrierDone), 0, thisProxy);
-  contribute(cb);
-}
-
-DistBaseLB::DistBaseLB(const CkLBOptions &opt): CBase_DistBaseLB(opt) {
-#if CMK_LBDB_ON
-  lbname = (char *)"DistBaseLB";
-  thisProxy = CProxy_DistBaseLB(thisgroup);
-  receiver = theLbdb->AddLocalBarrierReceiver((LDBarrierFn)(staticAtSync),
-      (void*)(this));
-  notifier = theLbdb->getLBDB()->NotifyMigrated((LDMigratedFn)(staticMigrated),
-      (void*)(this));
-  startLbFnHdl = theLbdb->getLBDB()->AddStartLBFn((LDStartLBFn)(staticStartLB),
-      (void*)(this));
-  theLbdb->AddStartLBFn((LDStartLBFn)(staticStartLB),(void*)this);
-
-  migrates_completed = 0;
-  migrates_expected = 0;
-  lb_started = false;
-  mig_msgs = NULL;
-
-  myStats.pe_speed = theLbdb->ProcessorSpeed();
-  myStats.from_pe = CkMyPe();
-  myStats.n_objs = 0;
-  myStats.objData = NULL;
-  myStats.n_comm = 0;
-  myStats.commData = NULL;
-
-  if (_lb_args.statsOn()) {
-    theLbdb->CollectStatsOn();
-  }
-#endif
-}
-
-DistBaseLB::~DistBaseLB() {
-#if CMK_LBDB_ON
-  theLbdb = CProxy_LBDatabase(_lbdb).ckLocalBranch();
-  if (theLbdb) {
-    theLbdb->getLBDB()->RemoveNotifyMigrated(notifier);
-    theLbdb-> RemoveStartLBFn((LDStartLBFn)(staticStartLB));
-  }
-  if (mig_msgs) {
-    delete [] mig_msgs;
-  }
-#endif
-}
-
-
-void DistBaseLB::AtSync() {
 #if CMK_LBDB_ON
   if (lb_started) {
     return;
@@ -106,36 +36,76 @@ void DistBaseLB::AtSync() {
 #endif
 }
 
+void DistBaseLB::InvokeLB() {
+  // Ensure that the strategy starts only after the barrier
+  CkCallback cb (CkReductionTarget(DistBaseLB, barrierDone), thisProxy);
+  contribute(cb);
+}
+
+DistBaseLB::DistBaseLB(const CkLBOptions &opt): CBase_DistBaseLB(opt) {
+#if CMK_LBDB_ON
+  lbname = (char *)"DistBaseLB";
+  thisProxy = CProxy_DistBaseLB(thisgroup);
+  startLbFnHdl = lbmgr->AddStartLBFn(this, &DistBaseLB::barrierDone);
+
+  if (opt.getSeqNo() > 0)
+    turnOff();
+
+  migrates_completed = 0;
+  migrates_expected = 0;
+  lb_started = false;
+  mig_msgs = NULL;
+
+  myStats.pe_speed = lbmgr->ProcessorSpeed();
+  myStats.from_pe = CkMyPe();
+
+  if (_lb_args.statsOn()) {
+    lbmgr->CollectStatsOn();
+  }
+#endif
+}
+
+DistBaseLB::~DistBaseLB() {
+#if CMK_LBDB_ON
+  lbmgr = CProxy_LBManager(_lbmgr).ckLocalBranch();
+  if (lbmgr) {
+    lbmgr->RemoveStartLBFn(startLbFnHdl);
+  }
+  if (mig_msgs) {
+    delete [] mig_msgs;
+  }
+#endif
+}
+
 // Assemble the stats for the local PE. The stats are collected by the
-// LBDatabase so assembl all the stats.
+// LBManager so assemble all the stats.
 void DistBaseLB::AssembleStats() {
 #if CMK_LBDB_ON
 #if CMK_LB_CPUTIMER
-  theLbdb->TotalTime(&myStats.total_walltime,&myStats.total_cputime);
-  theLbdb->BackgroundLoad(&myStats.bg_walltime,&myStats.bg_cputime);
+  lbmgr->TotalTime(&myStats.total_walltime,&myStats.total_cputime);
+  lbmgr->BackgroundLoad(&myStats.bg_walltime,&myStats.bg_cputime);
 #else
-  theLbdb->TotalTime(&myStats.total_walltime,&myStats.total_walltime);
-  theLbdb->BackgroundLoad(&myStats.bg_walltime,&myStats.bg_walltime);
+  lbmgr->TotalTime(&myStats.total_walltime,&myStats.total_walltime);
+  lbmgr->BackgroundLoad(&myStats.bg_walltime,&myStats.bg_walltime);
 #endif
-  theLbdb->IdleTime(&myStats.idletime);
+  lbmgr->IdleTime(&myStats.idletime);
 
   myStats.move = true; 
 
-  myStats.n_objs = theLbdb->GetObjDataSz();
-  if (myStats.objData) delete [] myStats.objData;
-  myStats.objData = new LDObjData[myStats.n_objs];
-  theLbdb->GetObjData(myStats.objData);
+  myStats.objData.clear();
+  myStats.objData.resize(lbmgr->GetObjDataSz());
+  lbmgr->GetObjData(myStats.objData.data());
 
-  myStats.n_comm = theLbdb->GetCommDataSz();
-  if (myStats.commData) delete [] myStats.commData;
-  myStats.commData = new LDCommData[myStats.n_comm];
-  theLbdb->GetCommData(myStats.commData);
+  myStats.commData.clear();
+  myStats.commData.resize(lbmgr->GetCommDataSz());
+  lbmgr->GetCommData(myStats.commData.data());
 
   myStats.obj_walltime = 0;
 #if CMK_LB_CPUTIMER
   myStats.obj_cputime = 0;
 #endif
-  for(int i=0; i < myStats.n_objs; i++) {
+  const int n_objs = myStats.objData.size();
+  for(int i = 0; i < n_objs; i++) {
     myStats.obj_walltime += myStats.objData[i].wallTime;
 #if CMK_LB_CPUTIMER
     myStats.obj_cputime += myStats.objData[i].cpuTime;
@@ -159,7 +129,7 @@ void DistBaseLB::LoadBalance() {
 #endif  
 }
 
-void DistBaseLB::Migrated(LDObjHandle h, int waitBarrier) {
+void DistBaseLB::Migrated(int waitBarrier) {
   migrates_completed++;
   if (migrates_completed == migrates_expected && lb_started) {
     MigrationDone(1);
@@ -178,8 +148,12 @@ void DistBaseLB::ProcessMigrationDecision(LBMigrateMsg *migrateMsg) {
   // Migrate messages from me to elsewhere
   for(int i=0; i < migrateMsg->n_moves; i++) {
     MigrateInfo& move = migrateMsg->moves[i];
-    if (move.from_pe == me && move.to_pe != me) {
-      theLbdb->Migrate(move.obj,move.to_pe);
+    if (move.from_pe == me) {
+      if (move.to_pe == me) {
+        CkAbort("[%i] Error, attempting to migrate object myself to myself\n",
+            CkMyPe());
+      }
+      lbmgr->Migrate(move.obj,move.to_pe);
     } else if (move.from_pe != me) {
       CkPrintf("[%d] Error, strategy wants to move from %d to  %d\n",
           me,move.from_pe,move.to_pe);
@@ -206,8 +180,8 @@ void DistBaseLB::MigrationDone(int balancing) {
   // Reset the lb_started flag to indicate that the lb is done
   lb_started = false;
   // Increment to next step
-  theLbdb->incStep();
-  theLbdb->ClearLoads();
+  lbmgr->incStep();
+  lbmgr->ClearLoads();
 
   // if sync resume invoke a barrier
   if (balancing && _lb_args.syncResume()) {
@@ -235,7 +209,7 @@ void DistBaseLB::ResumeClients(int balancing) {
           CmiMemoryUsage() / (1024.0 * 1024.0));
   }
 
-  theLbdb->ResumeClients();
+  lbmgr->ResumeClients();
 #endif
 }
 

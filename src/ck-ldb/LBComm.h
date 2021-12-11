@@ -10,7 +10,6 @@
 #include "lbdb.h"
 
 class LBObj; //Forward declaration
-template <class T> class CkVec; //Forward declaration
 
 // point to point communication data
 class LBCommData {
@@ -127,11 +126,7 @@ private:
   
   void Resize();
 
-#ifdef __BIGSIM__
-  enum { initial_sz = 1 };
-#else
   enum { initial_sz = 500 };
-#endif
   enum TableState : uint8_t { nil, InUse } ;
   LBCommData* set;
   TableState* state;

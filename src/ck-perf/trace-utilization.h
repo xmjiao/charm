@@ -55,7 +55,7 @@ class TraceUtilizationInit : public Chare {
  public:
   TraceUtilizationInit(CkArgMsg *m) {
     delete m;
-    CkPrintf("[%d] TraceUtilizationInit creating traceUtilizationGroupProxy");
+    CkPrintf("[%d] TraceUtilizationInit creating traceUtilizationGroupProxy", CkMyPe());
     fflush(stdout);
    
     traceUtilizationGroupProxy = CProxy_TraceUtilizationBOC::ckNew();
@@ -309,7 +309,7 @@ class TraceUtilization : public Trace {
     if(cpuTime != NULL && interval <= lastBinUsed)
       return cpuTime[(interval%NUM_BINS)*epInfoSize+ep]; 
     else {
-      CkPrintf("getCPUtime called with invalid options: cpuTime=%p lastBinUsed=%d interval=%d ep=%d\n", cpuTime, lastBinUsed, (int)interval, (int)ep);
+      CkPrintf("getCPUtime called with invalid options: cpuTime=%p lastBinUsed=%d interval=%d ep=%d\n", (void *)cpuTime, lastBinUsed, (int)interval, (int)ep);
       return 0.0;
     }
   }

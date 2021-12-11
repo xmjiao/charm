@@ -1,4 +1,5 @@
 -include ../../../../../common.mk
+-include ../../../../../../include/conv-mach-opt.mak
 CHARMC= ../../../../../../bin/charmc $(OPTS)
 
 all: simpleZCVec
@@ -15,6 +16,15 @@ simpleZCVec.o : simpleZCVec.C cifiles
 
 test: all
 	$(call run, +p4 ./simpleZCVec 32)
+ifeq ($(CMK_USE_CMA),1)
+	$(call run, +p4 ./simpleZCVec 32 +noCMAForZC)
+endif
+
+testp: all
+	$(call run, +p$(P) ./simpleZCVec $$(( $(P) * 10 )) )
+ifeq ($(CMK_USE_CMA),1)
+	$(call run, +p$(P) ./simpleZCVec $$(( $(P) * 10 )) +noCMAForZC )
+endif
 
 clean:
 	rm -f *.def.h *.decl.h *.o *~ *.exe cifiles charmrun simpleZCVec

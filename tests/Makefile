@@ -1,15 +1,12 @@
-# Temporary hack that needs to be removed / replaced
 -include ../include/conv-mach-opt.mak
+
+# Temporary hack that needs to be removed / replaced
 OPTS += $(OPTSATBUILDTIME)
 
 DIRS = \
   util \
   charm++ \
   converse \
-  ampi \
-
-BGDIRS = \
-  charm++ \
   ampi \
 
 FTDIRS = \
@@ -22,9 +19,9 @@ all: $(foreach i,$(DIRS),build-$i)
 
 test: $(foreach i,$(TESTDIRS),test-$i)
 
-bgtest: $(foreach i,$(filter $(BGDIRS),$(TESTDIRS)),bgtest-$i)
+testp: $(foreach i,$(TESTDIRS),testp-$i)
 
-syncfttest causalfttest mpisyncfttest mlogfttest: $(foreach i,$(filter $(FTDIRS),$(TESTDIRS)),test-$i)
+syncfttest mpisyncfttest: $(foreach i,$(filter $(FTDIRS),$(TESTDIRS)),test-$i)
 
 clean: $(foreach i,$(DIRS),clean-$i)
 	rm -f TAGS #*#
@@ -36,8 +33,8 @@ $(foreach i,$(DIRS),build-$i):
 $(foreach i,$(DIRS),test-$i):
 	$(MAKE) -C $(subst test-,,$@) test OPTS='$(OPTS)' TESTOPTS='$(TESTOPTS)'
 
-$(foreach i,$(DIRS),bgtest-$i):
-	$(MAKE) -C $(subst bgtest-,,$@) bgtest OPTS='$(OPTS)' TESTOPTS='$(TESTOPTS)'
+$(foreach i,$(DIRS),testp-$i):
+	$(MAKE) -C $(subst testp-,,$@) testp OPTS='$(OPTS)' TESTOPTS='$(TESTOPTS)' P='$(P)'
 
 $(foreach i,$(DIRS),clean-$i):
 	$(MAKE) -C $(subst clean-,,$@) clean OPTS='$(OPTS)'

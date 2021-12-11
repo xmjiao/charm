@@ -2,6 +2,8 @@
 #define _CKRDMAUTILS_H
 
 #include "conv-header.h"
+#include <stdio.h>
+#include <stddef.h>
 
 // Structure that can be used across layers
 typedef struct ncpystruct{
@@ -13,26 +15,28 @@ typedef struct ncpystruct{
 #endif
 
   const void *srcPtr;
-  int srcPe;
   char *srcLayerInfo;
-  int srcLayerSize;
   char *srcAck;
-  int srcAckSize;
-  int srcSize;
-  unsigned short int srcMode;
-  unsigned short int isSrcRegistered;
   const void *srcRef;
+  int srcPe;
+  size_t srcSize;
+  short int srcLayerSize;
+  short int srcAckSize;
+  unsigned char srcRegMode;
+  unsigned char srcDeregMode;
+  unsigned char isSrcRegistered;
 
   const void *destPtr;
-  int destPe;
   char *destLayerInfo;
-  int destLayerSize;
   char *destAck;
-  int destAckSize;
-  int destSize;
-  unsigned short int destMode;
-  unsigned short int isDestRegistered;
   const void *destRef;
+  int destPe;
+  size_t destSize;
+  short int destAckSize;
+  short int destLayerSize;
+  unsigned char destRegMode;
+  unsigned char destDeregMode;
+  unsigned char isDestRegistered;
 
   unsigned char opMode; // CMK_DIRECT_API for p2p direct api
                         // CMK_DIRECT_API_REVERSE for p2p direct api with inverse operation
@@ -47,11 +51,42 @@ typedef struct ncpystruct{
   unsigned char freeMe;  // CMK_FREE_NCPYOPINFO in order to free NcpyOperationInfo
                          // CMK_DONT_FREE_NCPYOPINFO in order to not free NcpyOperationInfo
 
+  short int ncpyOpInfoSize;
+
+  int rootNode; // used only for Broadcast, -1 for p2p operations
+
   void *refPtr;
 
-  int ncpyOpInfoSize;
-
 }NcpyOperationInfo;
+
+#if CMK_CUDA
+enum DeviceRecvType {
+  DEVICE_RECV_TYPE_CHARM,
+  DEVICE_RECV_TYPE_AMPI,
+  DEVICE_RECV_TYPE_CHARM4PY
+};
+
+typedef struct DeviceRdmaInfo_ {
+  int n_ops; // Number of RDMA operations, i.e. number of buffers being sent
+  int counter; // Used to track the number of completed RDMA operations
+  void* msg; // Charm++ message to be (re-)enqueued after all operations complete
+} DeviceRdmaInfo;
+
+typedef struct DeviceRdmaOp_ {
+  int dest_pe;
+  const void* dest_ptr;
+  size_t size;
+  DeviceRdmaInfo* info;
+  void* src_cb;
+  void* dst_cb;
+  uint64_t tag;
+} DeviceRdmaOp;
+
+typedef struct DeviceRdmaOpMsg_ {
+  char header[CmiMsgHeaderSizeBytes];
+  DeviceRdmaOp op;
+} DeviceRdmaOpMsg;
+#endif // CMK_CUDA
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,8 +104,9 @@ void setNcpyOpInfo(
   int srcLayerSize,
   char *srcAck,
   int srcAckSize,
-  int srcSize,
-  unsigned short int srcMode,
+  size_t srcSize,
+  unsigned short int srcRegMode,
+  unsigned short int srcDeregMode,
   unsigned short int isSrcRegistered,
   int srcPe,
   const void *srcRef,
@@ -79,11 +115,13 @@ void setNcpyOpInfo(
   int destLayerSize,
   char *destAck,
   int destAckSize,
-  int destSize,
-  unsigned short int destMode,
+  size_t destSize,
+  unsigned short int destRegMode,
+  unsigned short int destDeregMode,
   unsigned short int isdestRegistered,
   int destPe,
   const void *destRef,
+  int rootNode,
   NcpyOperationInfo *ncpyOpInfo);
 
 void resetNcpyOpInfoPointers(NcpyOperationInfo *ncpyOpInfo);

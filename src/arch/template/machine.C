@@ -26,7 +26,7 @@
 void ConverseInit(int, char**, CmiStartFn, int, int);
 void ConverseExit(int exitcode);
 
-void CmiAbort(const char *);
+void CmiAbort(const char *, ...);
 
 void          CmiSyncSendFn(int, int, char *);
 void          CmiFreeSendFn(int, int, char *);
@@ -87,9 +87,9 @@ void          CmiReleaseCommHandle(CmiCommHandle handle);
  */
 
 #if ! CMK_MULTICAST_LIST_USE_COMMON_CODE
-void          CmiSyncListSendFn(int, int *, int, char*);
-CmiCommHandle CmiAsyncListSendFn(int, int *, int, char*);
-void          CmiFreeListSendFn(int, int *, int, char*);
+void          CmiSyncListSendFn(int, const int *, int, char*);
+CmiCommHandle CmiAsyncListSendFn(int, const int *, int, char*);
+void          CmiFreeListSendFn(int, const int *, int, char*);
 #endif
 
 #if ! CMK_MULTICAST_GROUP_USE_COMMON_CODE
@@ -207,26 +207,6 @@ void CmiNodeBarrier(void);
 void CmiNodeAllBarrier(void);
 CmiNodeLock CmiCreateLock(void);
 void CmiDestroyLock(CmiNodeLock lock);
-
-#endif
-
-/* NOT VERY USEFUL */
-#if CMK_SHARED_VARS_UNIPROCESSOR /*Used only by uth- and sim- versions*/
-
-int _Cmi_mype;
-int _Cmi_numpes;
-
-void         CmiLock(CmiNodeLock lock);
-void         CmiUnlock(CmiNodeLock lock);
-int          CmiTryLock(CmiNodeLock lock);
-
-/* optional, these functions are implemented in "machine-smp.C", so including
-   this file avoid the necessity to reimplement them.
- */
-void CmiNodeBarrier(void);
-void CmiNodeAllBarrier(void);
-CmiNodeLock  CmiCreateLock(void);
-void         CmiDestroyLock(CmiNodeLock lock);
 
 #endif
 

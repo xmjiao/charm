@@ -38,8 +38,6 @@ public:
   void DoneGossip();
   void InformMigration(int obj_id, int from_pe, double obj_load, bool force);
   void RecvAck(int obj_id, int assigned_pe, bool can_accept);
-  void turnOn();
-  void turnOff();
 
 private:
   // Load information obtained via gossipping
@@ -47,6 +45,7 @@ private:
   std::vector<int> pe_no;
   std::vector<double> loads;
   std::vector<double> distribution;
+  bool underloaded;
 
   minHeap* objs;
 
@@ -89,8 +88,7 @@ private:
   void InitLB(const CkLBOptions &);
   void SendLoadInfo();
   void LoadBalance();
-  void LoadBalance(CkVec<int> &obj_no, CkVec<int> &obj_pe_no);
-  void MapObjsToPe(minHeap *objs, CkVec<int> &obj_no, CkVec<int> &obj_pe_no);
+  void MapObjsToPe(minHeap *objs, std::vector<int> &obj_no, std::vector<int> &obj_pe_no);
 	int PickRandReceiverPeIdx() const;
 	void CalculateCumulateDistribution();
   void Strategy(const DistBaseLB::LDStats* const stats);
