@@ -1,46 +1,80 @@
 -include ../../common.mk
 -include ../../../include/conv-mach-opt.mak
-CHARMC=../../../bin/ampicc
+AMPICC=../../../bin/ampicc
+AMPIF90=../../../bin/ampif90
 
-TEST_TARGETS :=
+TARGETS := hello
+TEST_CANDIDATES := test-hello
 
-# Fails on multicore-darwin because ASLR is not disabled (issue #3555)
-ifneq (1,$(CMK_MULTICORE))
-  TEST_TARGETS += test-hello
-else ifneq (1,$(CMK_MACOSX))
-  TEST_TARGETS += test-hello
+ifeq (1,$(CMK_CAN_LINK_FORTRAN))
+  TARGETS += fhello
+  TEST_CANDIDATES += test-fhello
 endif
 
-all: hello
+TEST_TARGETS :=
+# Fails on multicore-darwin because ASLR is not disabled (issue #3555)
+ifneq (1,$(CMK_MULTICORE))
+  TEST_TARGETS += $(TEST_CANDIDATES)
+else ifneq (1,$(CMK_MACOSX))
+  TEST_TARGETS += $(TEST_CANDIDATES)
+endif
+
+all: $(TARGETS)
 
 hello: hello.c
-	$(CHARMC) -o $@ $< $(OPTS)
+	$(AMPICC) -o $@ $< $(OPTS)
+
+fhello: fhello.f90
+	$(AMPIF90) -o $@ $< $(OPTS)
 
 test: $(TEST_TARGETS)
 
-test-hello:
+test-hello: hello
 	rm -rf log
-	$(call run, +p4 ./hello +vp8 )
+	$(call run, +p4 ./$< +vp8 )
 	-sync
-	$(call run, +p4 ./hello +vp8 +restart log )
-	$(call run, +p2 ./hello +vp8 +restart log )
-	-sync
-	rm -rf log
-	$(call run, +p2 ./hello +vp8 )
-	-sync
-	$(call run, +p4 ./hello +vp8 +restart log )
-	rm -rf log
-	-sync
-	$(call run, +p4 ./hello +vp8 +balancer RandCentLB )
-	-sync
-	$(call run, +p4 ./hello +vp8 +restart log )
-	$(call run, +p2 ./hello +vp8 +restart log )
+	$(call run, +p4 ./$< +vp8 +restart log )
+	$(call run, +p2 ./$< +vp8 +restart log )
 	-sync
 	rm -rf log
-	$(call run, +p2 ./hello +vp8 +balancer RandCentLB )
+	$(call run, +p2 ./$< +vp8 )
 	-sync
-	$(call run, +p4 ./hello +vp8 +restart log )
+	$(call run, +p4 ./$< +vp8 +restart log )
+	rm -rf log
+	-sync
+	$(call run, +p4 ./$< +vp8 +balancer RandCentLB )
+	-sync
+	$(call run, +p4 ./$< +vp8 +restart log )
+	$(call run, +p2 ./$< +vp8 +restart log )
+	-sync
+	rm -rf log
+	$(call run, +p2 ./$< +vp8 +balancer RandCentLB )
+	-sync
+	$(call run, +p4 ./$< +vp8 +restart log )
+
+test-fhello: fhello
+	rm -rf log
+	$(call run, +p4 ./$< +vp8 )
+	-sync
+	$(call run, +p4 ./$< +vp8 +restart log )
+	$(call run, +p2 ./$< +vp8 +restart log )
+	-sync
+	rm -rf log
+	$(call run, +p2 ./$< +vp8 )
+	-sync
+	$(call run, +p4 ./$< +vp8 +restart log )
+	rm -rf log
+	-sync
+	$(call run, +p4 ./$< +vp8 +balancer RandCentLB )
+	-sync
+	$(call run, +p4 ./$< +vp8 +restart log )
+	$(call run, +p2 ./$< +vp8 +restart log )
+	-sync
+	rm -rf log
+	$(call run, +p2 ./$< +vp8 +balancer RandCentLB )
+	-sync
+	$(call run, +p4 ./$< +vp8 +restart log )
 
 clean:
-	rm -f *.o *.mod moduleinit.C hello *~ conv-host charmrun ampirun
+	rm -f *.o *.mod moduleinit.C hello fhello *~ conv-host charmrun ampirun
 	rm -rf log
