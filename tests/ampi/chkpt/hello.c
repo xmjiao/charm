@@ -30,6 +30,7 @@ int main(int argc, char **argv) {
     MPI_Recv(b,2,MPI_DOUBLE,leftnbr,0,MPI_COMM_WORLD,&sts);
     if(myrank==0) printf("[%d]step %d,a={%f,%f},b={%f,%f}\n",myrank,step,a[0],a[1],b[0],b[1]);
     if(step==2){
+      AMPI_Migrate(AMPI_INFO_LB_SYNC);
       AMPI_Migrate(chkpt_info);
     }
   }
