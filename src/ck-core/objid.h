@@ -65,8 +65,8 @@ class ObjID {
             if ( eid > (HOME_MASK | ELEMENT_MASK) ) {
               CmiPrintf("\nError> ObjID ran out of element bits, please try re-building "
                         "Charm++ with a lower number of collection bits using "
-                        "-DCMK_OBJID_COLLECTION_BITS=N, such that 3<N<%d\n",
-                        COLLECTION_BITS);
+                        "-DCMK_OBJID_COLLECTION_BITS=N, such that 3<N<%d (eid: %llu, valid limit: %llu (%u bits))\n",
+                        COLLECTION_BITS, eid, (HOME_MASK | ELEMENT_MASK), (HOME_BITS + ELEMENT_BITS));
               // We don't generally recommend collections bits <= 3 though it's possible
               CmiAbort("Attempting to create too many chare elements!");
             }
